@@ -74,7 +74,7 @@ public class JavaMNA implements IMNA {
 
     @Override
     public CSolver.SolverBackend type() {
-        return CSolver.SolverBackend.JAVA;
+        return CSolver.SolverBackend.NATIVE;
     }
 
     @Override

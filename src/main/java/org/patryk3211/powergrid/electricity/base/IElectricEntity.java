@@ -32,6 +32,13 @@ import java.util.List;
 public interface IElectricEntity {
     void buildCircuit(CircuitBuilder builder);
 
+    default boolean usePersistentSimulation() {
+        return false;
+    }
+
+    default void simulationTick() {
+    }
+
     default float resistance() {
         if(this instanceof BlockEntity be)
             return ResistanceValues.get(be.getBlockState().getBlock());

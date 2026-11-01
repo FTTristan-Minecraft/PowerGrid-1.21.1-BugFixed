@@ -18,7 +18,6 @@ package org.patryk3211.powergrid.config;
 import net.createmod.catnip.config.ConfigBase;
 import org.patryk3211.powergrid.electricity.sim.ElectricalNetwork;
 import org.patryk3211.powergrid.electricity.sim.solver.IMNA;
-import org.patryk3211.powergrid.electricity.sim.solver.JavaMNA;
 import org.patryk3211.powergrid.electricity.sim.solver.NativeMNA;
 
 import java.util.function.BooleanSupplier;
@@ -57,7 +56,6 @@ public class CSolver extends ConfigBase {
     }
 
     public enum SolverBackend {
-        JAVA(() -> true, () -> JavaMNA::new),
         NATIVE(NativeMNA::isSupported, () -> NativeMNA::new);
 
         final BooleanSupplier checkSupport;
@@ -95,6 +93,6 @@ public class CSolver extends ConfigBase {
         public static final String diodeLimAlpha = "Diode inter-iteration voltage change smoothing multiplier";
         public static final String triodeLim = "Triode inter-iteration voltage change smoothing multiplier";
 
-        public static final String solverBackend = "Solver MNA backend. The native backend can provide platform-specific acceleration which usually improves performance, however it isn't portable and needs a special binary which might not be available for all platforms. Java backend is portable and always available as fallback.";
+        public static final String solverBackend = "Native MNA backend. Native acceleration is required; the mod will not start if the matching native binary is unavailable.";
     }
 }

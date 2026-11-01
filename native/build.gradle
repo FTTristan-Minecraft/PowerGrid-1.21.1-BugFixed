@@ -46,7 +46,7 @@ def configureTask = { String platform, String taskName, String libName ->
         try {
             def args = [ "${platformProperty('cmakeExecutable')}", '-S', "${project.layout.projectDirectory}",
                 '-B', "${cmakeBuildDir}",
-                '-D', "JVM_INCLUDE=\'${jvmHome}/include;${jvmHome}/include/${platform}\'",
+                '-D', "JVM_INCLUDE=${jvmHome}/include;${jvmHome}/include/${platform}",
                 '-D', 'CMAKE_EXPORT_COMPILE_COMMANDS=true',
                 '-D', "CMAKE_BUILD_TYPE=${platformProperty('cmakeBuildType')}",
                 '-D', "PG_TRACE=${project.nativeTrace}",

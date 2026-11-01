@@ -54,6 +54,8 @@ typedef struct Solver {
     auxbuf_t *m_aux;
 
     char m_converged;
+    char m_hasIterHooks;
+    char m_hasResidualHooks;
 } solver_t;
 
 void solver_init(solver_t *solver, void *rhsOpBuf, void *jacobianOpBuf, int cmdCount, void *auxBuf, JNIEnv *env, jobject mnaObj);
@@ -69,6 +71,7 @@ void solver_process_jacobian_buffer(solver_t *solver, int cmdCount);
 void solver_process_rhs_buffer(solver_t *solver);
 
 void solver_set_precision(solver_t *solver, double absolute, double relative, double minimum, double searchAlpha);
+void solver_set_hook_presence(solver_t *solver, int hasIterHooks, int hasResidualHooks);
 
 jobject solver_single_tick(solver_t *solver, int maxIters, jobject mnaObj, int cmdCount);
 

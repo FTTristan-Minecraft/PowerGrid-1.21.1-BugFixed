@@ -44,13 +44,21 @@ public abstract class GeneratorBlockEntity extends ElectricKineticBlockEntity {
     }
 
     @Override
-    public void tick() {
-        super.tick();
+    public boolean usePersistentSimulation() {
+        return true;
+    }
 
+    @Override
+    public void simulationTick() {
         float current = windingCurrent();
         float torque = coilConstant * fieldStrength() * current;
-
         speed += torque / armatureInertia * TIME_STEP;
         updateVoltage(emfVoltage());
+    }
+
+    @Override
+    public void tick() {
+        super.tick();
+        simulationTick();
     }
 }

@@ -42,6 +42,7 @@ public class FuseHolderBlockEntity extends ElectricBlockEntity {
     private SwitchedWire fuseWire;
 
     private FuseState state;
+    private int overcurrentTicks;
 
     public FuseHolderBlockEntity(BlockEntityType<?> type, BlockPos pos, BlockState state) {
         super(type, pos, state);
@@ -76,11 +77,26 @@ public class FuseHolderBlockEntity extends ElectricBlockEntity {
     }
 
     @Override
+    public boolean usePersistentSimulation() {
+        return true;
+    }
+
+    @Override
+    public void simulationTick() {
+        electricalTick();
+    }
+
+    @Override
     public void electricalTick() {
         if(fuseWire.getState()) {
             if(fuseWire.isConverged() && Math.abs(fuseWire.current()) > setting.value) {
-                setState(FuseState.BLOWN);
+                if(++overcurrentTicks >= 5)
+                    setState(FuseState.BLOWN);
+            } else {
+                overcurrentTicks = 0;
             }
+        } else {
+            overcurrentTicks = 0;
         }
     }
 

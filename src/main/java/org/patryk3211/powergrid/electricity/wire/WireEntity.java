@@ -15,6 +15,7 @@
  */
 package org.patryk3211.powergrid.electricity.wire;
 
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
@@ -103,11 +104,11 @@ public abstract class WireEntity extends BaseWireEntity {
     public void unloaded() {
         if(wire instanceof TransmissionLinePart part) {
             var reason = getRemovalReason();
-            if(reason != null && reason.shouldDestroy()) {
-                dropWire();
-            } else {
+            if(reason == Entity.RemovalReason.UNLOADED_TO_CHUNK || reason == Entity.RemovalReason.UNLOADED_WITH_PLAYER) {
                 part.unload();
                 wire = null;
+            } else {
+                dropWire();
             }
         } else {
             dropWire();

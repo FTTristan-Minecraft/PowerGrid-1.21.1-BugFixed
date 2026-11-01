@@ -30,7 +30,9 @@ public class ForgeEvents {
     @SubscribeEvent
     public static void entityUnloadEvent(EntityLeaveLevelEvent event) {
         if(event.getLevel() instanceof ServerLevel world) {
-            BaseWireEntity.entityUnload(event.getEntity(), world);
+            var reason = event.getEntity().getRemovalReason();
+            if(reason == null || reason != net.minecraft.world.entity.Entity.RemovalReason.CHANGED_DIMENSION)
+                BaseWireEntity.entityUnload(event.getEntity(), world);
         }
     }
 

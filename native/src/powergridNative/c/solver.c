@@ -178,16 +178,20 @@ jobject solver_single_tick(solver_t *solver, int maxIters, jobject mnaObj, int c
     for(i = 0; i < maxIters; ++i) {
         if(i == 0) {
             // Run inner hooks
-            PG_ASSERT_(solver->m_stateBuffer, "jBuffer 'state' not initialized!");
-            int cmdCount = (*solver->m_env)->CallIntMethod(solver->m_env, mnaObj, solver->m_iterHookMethod, i, solver->m_stateBuffer);
-            if(cmdCount != 0)
-                solver_process_jacobian_buffer(solver, cmdCount);
+            if(solver->m_hasIterHooks) {
+                PG_ASSERT_(solver->m_stateBuffer, "jBuffer 'state' not initialized!");
+                int cmdCount = (*solver->m_env)->CallIntMethod(solver->m_env, mnaObj, solver->m_iterHookMethod, i, solver->m_stateBuffer);
+                if(cmdCount != 0)
+                    solver_process_jacobian_buffer(solver, cmdCount);
+            }
         }
 
         // Compute residual vector
         memcpy(solver->m_b, solver->m_rhs, solver->m_size * sizeof(double));
-        PG_ASSERT_(solver->m_bBuffer, "jBuffer 'b' not initialized!");
-        (*solver->m_env)->CallVoidMethod(solver->m_env, mnaObj, solver->m_residualAddMethod, solver->m_bBuffer);
+        if(solver->m_hasResidualHooks) {
+            PG_ASSERT_(solver->m_bBuffer, "jBuffer 'b' not initialized!");
+            (*solver->m_env)->CallVoidMethod(solver->m_env, mnaObj, solver->m_residualAddMethod, solver->m_bBuffer);
+        }
         memcpy(solver->m_residual, solver->m_b, solver->m_size * sizeof(double));
         int inc = 1;
 
@@ -215,14 +219,18 @@ jobject solver_single_tick(solver_t *solver, int maxIters, jobject mnaObj, int c
             alpha = 0;
             while(alpha < solver->m_maxSearchAlpha) {
                 // Run inner hooks
-                PG_ASSERT_(solver->m_stateBuffer, "jBuffer 'state' not initialized!");
-                int cmdCount = (*solver->m_env)->CallIntMethod(solver->m_env, mnaObj, solver->m_iterHookMethod, i, solver->m_stateBuffer);
-                if(cmdCount != 0)
-                    solver_process_jacobian_buffer(solver, cmdCount);
+                if(solver->m_hasIterHooks) {
+                    PG_ASSERT_(solver->m_stateBuffer, "jBuffer 'state' not initialized!");
+                    int cmdCount = (*solver->m_env)->CallIntMethod(solver->m_env, mnaObj, solver->m_iterHookMethod, i, solver->m_stateBuffer);
+                    if(cmdCount != 0)
+                        solver_process_jacobian_buffer(solver, cmdCount);
+                }
                 // Compute residual vector
                 memcpy(solver->m_b, solver->m_rhs, solver->m_size * sizeof(double));
-                PG_ASSERT_(solver->m_bBuffer, "jBuffer 'b' not initialized!");
-                (*solver->m_env)->CallVoidMethod(solver->m_env, mnaObj, solver->m_residualAddMethod, solver->m_bBuffer);
+                if(solver->m_hasResidualHooks) {
+                    PG_ASSERT_(solver->m_bBuffer, "jBuffer 'b' not initialized!");
+                    (*solver->m_env)->CallVoidMethod(solver->m_env, mnaObj, solver->m_residualAddMethod, solver->m_bBuffer);
+                }
                 memcpy(solver->m_residual, solver->m_b, solver->m_size * sizeof(double));
                 // R = A * x - R
                 sp_dgemv(&trans, 1.0, A, solver->m_state, 1, -1.0, solver->m_residual, 1);
@@ -251,6 +259,11 @@ jobject solver_single_tick(solver_t *solver, int maxIters, jobject mnaObj, int c
     solver->m_aux->status = solver->m_converged ? 1 : 0;
     PG_TRACE("[Solver::singleTick] returning");
     return solver->m_stateBuffer;
+}
+
+void solver_set_hook_presence(solver_t *solver, int hasIterHooks, int hasResidualHooks) {
+    solver->m_hasIterHooks = hasIterHooks != 0;
+    solver->m_hasResidualHooks = hasResidualHooks != 0;
 }
 
 void solver_set_precision(solver_t *solver, double absolute, double relative, double minimum, double searchAlpha) {

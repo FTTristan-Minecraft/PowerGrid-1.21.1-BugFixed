@@ -26,6 +26,7 @@ import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
@@ -577,16 +578,20 @@ public class CordEntity extends BaseWireEntity implements IComplexRaycast {
 
     @Override
     public void unloaded() {
-        if(wire1 instanceof TransmissionLinePart part1 && wire2 instanceof TransmissionLinePart part2) {
-            var reason = getRemovalReason();
-            if(reason != null && reason.shouldDestroy()) {
-                dropWire();
-            } else {
+        var reason = getRemovalReason();
+        boolean chunkUnload = reason == Entity.RemovalReason.UNLOADED_TO_CHUNK
+                || reason == Entity.RemovalReason.UNLOADED_WITH_PLAYER;
+        if(chunkUnload) {
+            if(wire1 instanceof TransmissionLinePart part1)
                 part1.unload();
+            else if(wire1 != null)
+                wire1.remove();
+            if(wire2 instanceof TransmissionLinePart part2)
                 part2.unload();
-                wire1 = null;
-                wire2 = null;
-            }
+            else if(wire2 != null)
+                wire2.remove();
+            wire1 = null;
+            wire2 = null;
         } else {
             dropWire();
         }

@@ -31,7 +31,7 @@ import java.nio.file.Paths;
 import static org.patryk3211.powergrid.electricity.sim.ElectricalNetwork.LOGGER;
 
 public class NativeMNA implements IMNA {
-    private static final String EXPECTED_VERSION = "7";
+    private static final String EXPECTED_VERSION = "8";
 
     private static final int OPERATION_BUFFER_COMMAND_LENGTH = 256;
     private static final int JACOBIAN_COMMAND_SIZE = Integer.BYTES * 2 + Double.BYTES;
@@ -93,7 +93,7 @@ public class NativeMNA implements IMNA {
                     if (platformFolder == null) {
                         // Platform not available in jar
                         PowerGrid.LOGGER.error(MESSAGE_FAIL, e);
-                        return;
+                        throw new IllegalStateException("Power Grid native solver is unsupported on this operating system", e);
                     }
                     var loader = NativeMNA.class.getClassLoader();
                     var stream = loader.getResourceAsStream("native/" + platformFolder + "/" + libName);
@@ -118,6 +118,8 @@ public class NativeMNA implements IMNA {
                 PowerGrid.LOGGER.error(MESSAGE_FAIL, e2);
             }
         }
+        if(!supported)
+            throw new IllegalStateException("Power Grid requires native solver binary 'libpowergridNative" + EXPECTED_VERSION + ".so' (Linux) or 'powergridNative" + EXPECTED_VERSION + ".dll' (Windows)");
     }
 
     private static void loadBinary() {
@@ -294,7 +296,8 @@ public class NativeMNA implements IMNA {
         jacobianOps.position(0);
 
         if(hooksChanged) {
-            // Negotiate native accelerated hook implementations.
+            boolean hasIterHooks = !network.innerHooks.isEmpty();
+            setHookPresence(nativePtr, hasIterHooks, hasIterHooks);
             hooksChanged = false;
         }
 
@@ -397,6 +400,7 @@ public class NativeMNA implements IMNA {
     private static native void processJacobianBuffer(long ptr, int cmdCount);
     private static native void processRHSBuffer(long ptr);
     private static native void setPrecision(long ptr, double absoluteCriterion, double relativeCriterion, double minimumPrecision, double searchAlpha);
+    private static native void setHookPresence(long ptr, boolean iterHooks, boolean residualHooks);
     private native ByteBuffer singleTick(long ptr, int maxIters, int jacobianCmdCount);
     private static native int verifySupport();
 }

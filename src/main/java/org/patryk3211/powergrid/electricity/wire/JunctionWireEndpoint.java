@@ -296,6 +296,10 @@ public class JunctionWireEndpoint implements IWireEndpoint {
         GlobalElectricNetworks.getWorldNetworks(world).nodeHolderRemoved(entry.node);
     }
 
+    public static void unloadWorld(Level world) {
+        JUNCTION_NODES.remove(world);
+    }
+
     public static void processNewNodes(Level world) {
         var worldNodeMap = JUNCTION_NODES.get(world);
         if(worldNodeMap != null && !worldNodeMap.newNodes.isEmpty()) {

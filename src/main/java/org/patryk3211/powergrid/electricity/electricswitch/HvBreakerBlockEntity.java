@@ -51,6 +51,7 @@ public class HvBreakerBlockEntity extends ElectricKineticBlockEntity {
     protected boolean prevState, state, wasCharged;
     private boolean redstoneState;
     private int splitCooldown;
+    private int overcurrentTicks;
 
     public HvBreakerBlockEntity(BlockEntityType<?> typeIn, BlockPos pos, BlockState state) {
         super(typeIn, pos, state);
@@ -136,6 +137,36 @@ public class HvBreakerBlockEntity extends ElectricKineticBlockEntity {
     }
 
     @Override
+    public boolean usePersistentSimulation() {
+        return true;
+    }
+
+    private void simulationProtectionTick() {
+        if(wire != null) {
+            if (state && setting.getValue() != 0 && !level.isClientSide && wire.isConverged()) {
+                if (Math.abs(wire.current()) > setting.getValue()) {
+                    ++overcurrentTicks;
+                    if(overcurrentTicks >= 5) {
+                        state = false;
+                        wire.setState(false);
+                        overcurrentTicks = 0;
+                        charge.setValueNoUpdate(0);
+                        ModdedSoundEvents.BREAKER_OFF.playOnServer(level, worldPosition);
+                        notifyUpdate();
+                    }
+                } else {
+                    overcurrentTicks = 0;
+                }
+            }
+        }
+    }
+
+    @Override
+    public void simulationTick() {
+        simulationProtectionTick();
+    }
+
+    @Override
     public void tick() {
         assert level != null;
         applyPower(wire);
@@ -160,15 +191,7 @@ public class HvBreakerBlockEntity extends ElectricKineticBlockEntity {
         }
 
         if(wire != null) {
-            if (state && setting.getValue() != 0 && !level.isClientSide && wire.isConverged()) {
-                if (Math.abs(wire.current()) > setting.getValue()) {
-                    state = false;
-                    wire.setState(false);
-                    charge.setValueNoUpdate(0);
-                    ModdedSoundEvents.BREAKER_OFF.playOnServer(level, worldPosition);
-                    notifyUpdate();
-                }
-            }
+            simulationProtectionTick();
             if (!state && splitCooldown++ >= 100) {
                 GlobalElectricNetworks.getWorldNetworks(level).scheduleIslandDiscovery(wire.getNetwork());
                 electricBehaviour.rebuildCircuit(false);

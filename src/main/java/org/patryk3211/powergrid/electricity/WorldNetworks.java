@@ -15,7 +15,6 @@
  */
 package org.patryk3211.powergrid.electricity;
 
-import com.google.common.collect.Sets;
 import io.netty.util.collection.IntObjectHashMap;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
@@ -64,9 +63,11 @@ public class WorldNetworks extends SavedData implements NetworkGraph.IGraphModif
     private final Map<IWireEndpoint, Set<ServerPlayer>> trackers = new HashMap<>();
 
     protected final Set<TransmissionLinePart> deferredRewireEntities = new HashSet<>();
+    private final Set<ElectricBehaviour> persistentSimulations = new HashSet<>();
     protected final Set<ElectricalNetwork> islandDiscoveryQueue = new HashSet<>();
     private boolean runningDiscovery = false;
     private int syncTicks = 0;
+    private int idleTicks = 0;
 
     private CompoundTag nbt;
 
@@ -82,6 +83,14 @@ public class WorldNetworks extends SavedData implements NetworkGraph.IGraphModif
     public WorldNetworks(Level world, CompoundTag nbt) {
         this(world);
         this.nbt = nbt;
+    }
+
+    public void registerPersistentSimulation(ElectricBehaviour behaviour) {
+        persistentSimulations.add(behaviour);
+    }
+
+    public void unregisterPersistentSimulation(ElectricBehaviour behaviour) {
+        persistentSimulations.remove(behaviour);
     }
 
     void completeLoad() {
@@ -244,6 +253,9 @@ public class WorldNetworks extends SavedData implements NetworkGraph.IGraphModif
         });
         JunctionWireEndpoint.processNewNodes(world);
 
+        for(var behaviour : List.copyOf(persistentSimulations))
+            behaviour.simulationTick();
+
         runningDiscovery = true;
         for(var network : islandDiscoveryQueue) {
             runIslandDiscoveryFor(network);
@@ -265,8 +277,10 @@ public class WorldNetworks extends SavedData implements NetworkGraph.IGraphModif
         }
         removed.forEach(TransmissionLine::remove);
 
-        var hasPlayers = world instanceof ServerLevel serverLevel && !serverLevel.getServer().getPlayerList().getPlayers().isEmpty();
-        if(!hasPlayers && syncTicks % 200 == 0) {
+        var hasPlayers = world instanceof ServerLevel serverLevel && !serverLevel.players().isEmpty();
+        if(hasPlayers) {
+            idleTicks = 0;
+        } else if(++idleTicks % 200 == 0) {
             for(var network : subnetworks) {
                 network.resetStateForIdle();
             }
@@ -295,18 +309,13 @@ public class WorldNetworks extends SavedData implements NetworkGraph.IGraphModif
 
     public void postTick() {
         if(world instanceof ServerLevel serverWorld) {
-            // Check for line parts existence
             var checkIter = checkForExistence.entrySet().iterator();
             while(checkIter.hasNext()) {
                 var entry = checkIter.next();
                 var chunk = entry.getKey();
                 if(!world.hasChunk(chunk.x, chunk.z)) {
-                    if(expectedInChunks.containsKey(chunk)) {
-                        expectedInChunks.get(chunk).addAll(entry.getValue().entities);
-                    } else {
-                        entry.getValue().ticks = 0;
-                        expectedInChunks.put(chunk, entry.getValue());
-                    }
+                    expectedInChunks.computeIfAbsent(chunk, $ -> new CheckChunk()).addAll(entry.getValue().entities);
+                    checkIter.remove();
                     continue;
                 }
                 var remove = entry.getValue().ticks++ >= 10;
@@ -315,25 +324,21 @@ public class WorldNetworks extends SavedData implements NetworkGraph.IGraphModif
                     var id = entityIter.next();
                     if(id.getEntity(serverWorld) == null) {
                         if(remove) {
-                            // Doesn't exist even after chunk has been loaded.
                             var part = lineParts.get(id);
-                            if (part == null)
+                            if(part == null)
                                 continue;
-                            // Destroy line
                             var line = part.getLine();
-                            if(line != null) {
+                            if(line != null)
                                 line.remove();
-                            } else {
+                            else
                                 part.remove();
-                            }
                         }
                     } else {
                         entityIter.remove();
                     }
                 }
-                if(remove || entry.getValue().entities.isEmpty()) {
+                if(remove || entry.getValue().entities.isEmpty())
                     checkIter.remove();
-                }
             }
             // Synchronize state with clients
             if(syncTicks % 5 == 0) {
@@ -430,7 +435,7 @@ public class WorldNetworks extends SavedData implements NetworkGraph.IGraphModif
         var cSolver = ModdedConfigs.server().electricity.solver;
         var backend = cSolver.solverBackend.get();
         if(!backend.isSupported())
-            backend = CSolver.SolverBackend.JAVA;
+            throw new IllegalStateException("The required Power Grid native solver is unavailable for this platform");
         var network = new GraphedElectricalNetwork(globalGraph, true, backend::create);
         network.maxIterations = hooks -> hooks
                 ? cSolver.solverComplexMaxIterations.get()
@@ -879,32 +884,8 @@ public class WorldNetworks extends SavedData implements NetworkGraph.IGraphModif
     }
 
     public void nodeHolderUnloaded(@NotNull OwnedFloatingNode ownedNode) {
-        // Here, we need to choose between preserving transmission line junction nodes or removing them.
-        // A transmission line should be preserved if terminates on a junction which connects to more
-        // transmission lines.
-        Collection<TransmissionLine> lines;
-        while(true) {
-            lines = globalGraph.getConnectedLines(ownedNode);
-            if(lines.size() != 1 || globalGraph.connectionCount(ownedNode) != 1) {
-                // We CANNOT delete the node, as it still is part of a bigger circuit.
-                break;
-            }
-            // No need to keep this line (or the node).
-            var line = lines.iterator().next();
-            var removeNode = ownedNode;
-            if(line.getNode1() == ownedNode) {
-                ownedNode = line.getNode2();
-            } else {
-                assert line.getNode2() == ownedNode;
-                ownedNode = line.getNode1();
-            }
-            // Also, we need to inform the wire entities about this.
-            line.unresolve();
-            setDirty();
-            scheduleIslandDiscovery(removeNode.getNetwork());
-            removeNode.remove();
-            globalExternalNodes.remove(removeNode.endpoint);
-        }
+        // Chunk unloading must not dismantle electrical networks. Equipment blocks and internal
+        // circuits pause when unloaded, but their external transmission-line nodes stay simulated.
     }
 
     public void nodeHolderRemoved(@NotNull OwnedFloatingNode ownedNode) {
@@ -912,7 +893,7 @@ public class WorldNetworks extends SavedData implements NetworkGraph.IGraphModif
         var parts = partNodeMap.remove(ownedNode);
         if(parts != null && !parts.isEmpty()) {
             // But just in case, remove any part that still exists.
-            for(var part : parts) {
+            for(var part : List.copyOf(parts)) {
                 if(part.owner != null) {
                     part.owner.kill();
                 } else {
@@ -1139,9 +1120,10 @@ public class WorldNetworks extends SavedData implements NetworkGraph.IGraphModif
     public void bounty(PartId entityId, ChunkPos lastKnownChunk) {
         if(world.hasChunk(lastKnownChunk.x, lastKnownChunk.z)) {
             checkForExistence.computeIfAbsent(lastKnownChunk, $ -> new CheckChunk()).add(entityId);
-            return;
+        } else {
+            expectedInChunks.computeIfAbsent(lastKnownChunk, $ -> new CheckChunk()).add(entityId);
         }
-        expectedInChunks.computeIfAbsent(lastKnownChunk, $ -> new CheckChunk()).add(entityId);
+        setDirty();
     }
 
     public void tracking(ServerPlayer tracker, IWireEndpoint endpoint, boolean end) {
@@ -1180,11 +1162,7 @@ public class WorldNetworks extends SavedData implements NetworkGraph.IGraphModif
     public void chunkLoaded(ChunkPos chunkPos) {
         var set = expectedInChunks.remove(chunkPos);
         if(set != null) {
-            if(checkForExistence.containsKey(chunkPos)) {
-                checkForExistence.get(chunkPos).addAll(set.entities);
-            } else {
-                checkForExistence.put(chunkPos, set);
-            }
+            checkForExistence.computeIfAbsent(chunkPos, $ -> new CheckChunk()).addAll(set.entities);
         }
     }
 
@@ -1277,7 +1255,7 @@ public class WorldNetworks extends SavedData implements NetworkGraph.IGraphModif
     }
 
     private static class CheckChunk {
-        public final Set<PartId> entities = Sets.newConcurrentHashSet();
+        public final Set<PartId> entities = ConcurrentHashMap.newKeySet();
         public int ticks = 0;
 
         public void add(PartId id) {

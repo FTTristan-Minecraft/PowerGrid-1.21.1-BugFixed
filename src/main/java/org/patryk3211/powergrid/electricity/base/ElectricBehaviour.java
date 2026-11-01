@@ -156,7 +156,15 @@ public class ElectricBehaviour extends BlockEntityBehaviour implements ISynchron
         return externalNodes;
     }
 
+    public boolean usesPersistentSimulation() {
+        return element.usePersistentSimulation();
+    }
+
     public void pause() {
+        if(usesPersistentSimulation()) {
+            GlobalElectricNetworks.registerPersistentSimulation(this);
+            return;
+        }
         if(!paused) {
             paused = true;
             element.paused();
@@ -220,6 +228,8 @@ public class ElectricBehaviour extends BlockEntityBehaviour implements ISynchron
     }
 
     public void unpause() {
+        if(usesPersistentSimulation())
+            GlobalElectricNetworks.unregisterPersistentSimulation(this);
         if(paused) {
             paused = false;
             // External nodes weren't removed so they don't have to be added.
@@ -242,10 +252,22 @@ public class ElectricBehaviour extends BlockEntityBehaviour implements ISynchron
     }
 
     public void remove() {
+        GlobalElectricNetworks.unregisterPersistentSimulation(this);
         breakConnections();
-        pause();
+        if(usesPersistentSimulation()) {
+            internalWires.forEach(AbstractElectricWire::remove);
+            for(int i = internalNodes.size() - 1; i >= 0; --i)
+                internalNodes.get(i).remove();
+        } else {
+            pause();
+        }
         GlobalElectricNetworks.nodeHolderRemoved(this);
         removed = true;
+    }
+
+    public void simulationTick() {
+        if(usesPersistentSimulation())
+            element.simulationTick();
     }
 
     public void refreshConnectionEntities() {

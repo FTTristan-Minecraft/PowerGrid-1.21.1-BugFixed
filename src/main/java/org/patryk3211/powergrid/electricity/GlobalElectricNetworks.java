@@ -40,6 +40,7 @@ import org.patryk3211.powergrid.electricity.sim.node.OwnedFloatingNode;
 import org.patryk3211.powergrid.electricity.sim.special.TransmissionLine;
 import org.patryk3211.powergrid.electricity.wire.BaseWireEntity;
 import org.patryk3211.powergrid.electricity.wire.IWireEndpoint;
+import org.patryk3211.powergrid.electricity.wire.JunctionWireEndpoint;
 import org.patryk3211.powergrid.electricity.wire.WireEntity;
 import org.patryk3211.powergrid.utility.NumberFormats;
 
@@ -64,6 +65,7 @@ public class GlobalElectricNetworks {
     }
 
     public static void unloadWorld(ServerLevel world) {
+        JunctionWireEndpoint.unloadWorld(world);
         worldNetworks.remove(world);
     }
 
@@ -190,6 +192,18 @@ public class GlobalElectricNetworks {
         }
     }
 
+    public static void registerPersistentSimulation(ElectricBehaviour behaviour) {
+        var worldNetworks = getWorldNetworks(behaviour.blockEntity.getLevel());
+        if(worldNetworks != null)
+            worldNetworks.registerPersistentSimulation(behaviour);
+    }
+
+    public static void unregisterPersistentSimulation(ElectricBehaviour behaviour) {
+        var worldNetworks = getWorldNetworks(behaviour.blockEntity.getLevel());
+        if(worldNetworks != null)
+            worldNetworks.unregisterPersistentSimulation(behaviour);
+    }
+
     public static void prepareUnpaused(ElectricBehaviour behaviour) {
         var worldNetworks = getWorldNetworks(behaviour.blockEntity.getLevel());
         for(OwnedFloatingNode node : behaviour.getExternalNodes()) {
@@ -204,11 +218,8 @@ public class GlobalElectricNetworks {
         var rR = cSolver.solverRelativePrecision.get();
         var rM = cSolver.solverAbsoluteMinimumPrecision.get();
         var sA = cSolver.solverMaxSearchAlpha.get();
-        if(!backend.isSupported()) {
-            PowerGrid.LOGGER.error("Selected backend '{}' is not supported! Using Java backend instead", backend);
-            backend = CSolver.SolverBackend.JAVA;
-            cSolver.solverBackend.set(CSolver.SolverBackend.JAVA);
-        }
+        if(!backend.isSupported())
+            throw new IllegalStateException("The required Power Grid native solver is unavailable for this platform");
         final var selectedBackend = backend;
         for(var networks : worldNetworks.values()) {
             networks.subnetworks.forEach(network -> {
