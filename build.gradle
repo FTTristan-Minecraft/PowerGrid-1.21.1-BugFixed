@@ -230,6 +230,7 @@ subprojects {
 		dependsOn shadowJar
 		injectAccessWidener = true
 		archiveClassifier = null
+		duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 
 		from({ -> projNative.tasks.buildLinux.outputs }) {
 			into('native/linux')
