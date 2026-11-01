@@ -62,8 +62,8 @@ public class TransmissionLinePort extends VoltageSourceCoupling implements IOute
 
     @Override
     public void startIteration(int iteration) {
-        var I = -(getCurrent() - this.I) * getResistance();
-        Ieq = Ieq * 0.5f + I * 0.5f;
+        var correction = -(getCurrent() - this.I) * getResistance();
+        Ieq = correction;
     }
 
     @Override

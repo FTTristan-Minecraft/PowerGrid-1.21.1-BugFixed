@@ -18,6 +18,7 @@ package org.patryk3211.powergrid.config;
 import net.createmod.catnip.config.ConfigBase;
 import org.patryk3211.powergrid.electricity.sim.ElectricalNetwork;
 import org.patryk3211.powergrid.electricity.sim.solver.IMNA;
+import org.patryk3211.powergrid.electricity.sim.solver.JavaMNA;
 import org.patryk3211.powergrid.electricity.sim.solver.NativeMNA;
 
 import java.util.function.BooleanSupplier;
@@ -56,6 +57,7 @@ public class CSolver extends ConfigBase {
     }
 
     public enum SolverBackend {
+        JAVA(() -> true, () -> JavaMNA::new),
         NATIVE(NativeMNA::isSupported, () -> NativeMNA::new);
 
         final BooleanSupplier checkSupport;

@@ -52,7 +52,7 @@ public class TransmissionLineTest {
         Net2.network.addNode(T2);
         Net2.W(R2, N2, null);
 
-        for(int i = 0; i < 20; ++i) {
+        for(int i = 0; i < 140; ++i) {
             double Iprev = V1.getCurrent(), Vprev = N2.getVoltage();
             Net1.calculate();
             Net2.calculate();

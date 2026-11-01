@@ -308,6 +308,7 @@ public class ElectricalNetwork implements IStamped {
         }
         if(!wires.add(wire))
             return;
+        setDirty();
         if(mna != null)
             mna.rowExchange(false);
         wire.setNetwork(this);
@@ -372,6 +373,7 @@ public class ElectricalNetwork implements IStamped {
     public void removeWire(AbstractElectricWire wire) {
         if(!wires.contains(wire))
             return;
+        setDirty();
         if(mna != null)
             mna.rowExchange(false);
         wires.remove(wire);
@@ -397,6 +399,7 @@ public class ElectricalNetwork implements IStamped {
     }
 
     public void updateResistance(AbstractElectricWire wire, double oldResistance) {
+        setDirty();
         double change = wire.conductance();
         if(oldResistance != 0)
             change -= 1 / oldResistance;
@@ -669,7 +672,10 @@ public class ElectricalNetwork implements IStamped {
         if(mna == null)
             return;
         var nodeCount = nodes.size();
+        boolean rebuiltFromScratch = false;
+        boolean hasIncrementalUpdates = conductanceUpdates > 0 || conductanceDelta > 0;
         if(dirty) {
+            rebuiltFromScratch = true;
             mna.allocate(nodeCount);
             dirty = false;
 
@@ -678,6 +684,7 @@ public class ElectricalNetwork implements IStamped {
             // individual resistance and coupling value changes are handled by `updateResistance()` and `updateCoupling()` respectively.
             populateConductanceMatrix();
         } else if(conductanceUpdates >= nodeCount * 40 || conductanceDelta > 1000) {
+            rebuiltFromScratch = true;
             // To prevent resistance from deviating due to floating point imprecision sometimes we rebuild
             // the matrices from scratch.
             currentMultiTick = multiTicks;
@@ -697,6 +704,15 @@ public class ElectricalNetwork implements IStamped {
                 }
             }
             currentMultiTick = multiTicks;
+        }
+
+        if(rebuiltFromScratch) {
+            conductanceDelta = 0;
+            conductanceUpdates = 0;
+        } else if(hasIncrementalUpdates) {
+            mna.finishJacobianWrite();
+            conductanceDelta = 0;
+            conductanceUpdates = 0;
         }
     }
 
