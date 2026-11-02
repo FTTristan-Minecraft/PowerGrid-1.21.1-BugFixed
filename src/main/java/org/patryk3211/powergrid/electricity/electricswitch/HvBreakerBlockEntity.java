@@ -34,6 +34,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.Nullable;
 import org.patryk3211.powergrid.collections.ModdedSoundEvents;
+import org.patryk3211.powergrid.config.ThermalValues;
 import org.patryk3211.powergrid.PowerGrid;
 import org.patryk3211.powergrid.electricity.GlobalElectricNetworks;
 import org.patryk3211.powergrid.electricity.GridDiagnostics;
@@ -58,6 +59,11 @@ public class HvBreakerBlockEntity extends ElectricKineticBlockEntity {
     private long lastOvercurrentTime = Long.MIN_VALUE;
     // Highest current seen during the running overcurrent streak, reported when the breaker trips.
     private double overcurrentPeak;
+    // Sum of ((I / limit)^2 - 1) over the streak, a measure of how much heat the overload has put into the breaker.
+    private double overcurrentHeat;
+    // A heavy overload must open the breaker long before the 5 tick delay, which it wouldn't survive (it has
+    // very little thermal mass). 4 means: 2.2 times the trip current opens it at once, 1.5 times after 4 ticks.
+    private static final double TRIP_HEAT = 4.0;
 
     public HvBreakerBlockEntity(BlockEntityType<?> typeIn, BlockPos pos, BlockState state) {
         super(typeIn, pos, state);
@@ -72,9 +78,20 @@ public class HvBreakerBlockEntity extends ElectricKineticBlockEntity {
         behaviours.add(setting);
     }
 
+    // The trip current can be set up to this value, the breaker has to be able to carry it.
+    private static final int MAX_TRIP_CURRENT = 100;
+    // Closing onto a transmission line (or any other capacitive load) draws a few ticks of several times the
+    // normal current. A breaker which can't absorb that would be destroyed every time it is switched in.
+    private static final float MIN_THERMAL_MASS = 20.0f;
+
     @Override
     public @Nullable ThermalBehaviour specifyThermalBehaviour() {
-        return ThermalBehaviour.fromConfig(this);
+        var block = getBlockState().getBlock();
+        // The configured values are a floor, below it the breaker couldn't carry the current it is meant to trip at.
+        float ratedPower = MAX_TRIP_CURRENT * MAX_TRIP_CURRENT * resistance();
+        float mass = Math.max(ThermalValues.getMass(block), MIN_THERMAL_MASS);
+        float power = Math.max(ThermalValues.getPower(block), ratedPower);
+        return ThermalBehaviour.forMaxPower(this, mass, power);
     }
 
     @Override
@@ -159,6 +176,7 @@ public class HvBreakerBlockEntity extends ElectricKineticBlockEntity {
     private void resetOvercurrent() {
         overcurrentTicks = 0;
         overcurrentPeak = 0;
+        overcurrentHeat = 0;
         lastOvercurrentTime = Long.MIN_VALUE;
     }
 
@@ -185,19 +203,20 @@ public class HvBreakerBlockEntity extends ElectricKineticBlockEntity {
             resetOvercurrent();
         lastOvercurrentTime = now;
         overcurrentPeak = Math.max(overcurrentPeak, current);
+        overcurrentHeat += (current / limit) * (current / limit) - 1;
         ++overcurrentTicks;
 
         if(overcurrentTicks == 1) {
             RateLimitedLog.warn(PowerGrid.LOGGER, "hv-breaker-overcurrent-" + worldPosition.asLong(),
                     "HV breaker at {} ({}) sees {} A, above its trip current of {} A (checked by {}): {}",
                     GridDiagnostics.position(worldPosition), level.dimension().location(),
-                    String.format("%.3f", current), limit, origin, GridDiagnostics.describe(wire));
+                    String.format("%.3f", current), limit, origin, GridDiagnostics.describe(wire, level));
         }
-        if(overcurrentTicks >= 5) {
+        if(overcurrentTicks >= 5 || overcurrentHeat >= TRIP_HEAT) {
             RateLimitedLog.warn(PowerGrid.LOGGER, "hv-breaker-trip-" + worldPosition.asLong(),
-                    "HV breaker at {} ({}) TRIPPED: current stayed above {} A for {} ticks, peak {} A (checked by {}): {}",
+                    "HV breaker at {} ({}) TRIPPED: current stayed above {} A for {} ticks, peak {} A, overload heat {} (checked by {}): {}",
                     GridDiagnostics.position(worldPosition), level.dimension().location(), limit, overcurrentTicks,
-                    String.format("%.3f", overcurrentPeak), origin, GridDiagnostics.describe(wire));
+                    String.format("%.3f", overcurrentPeak), String.format("%.2f", overcurrentHeat), origin, GridDiagnostics.describe(wire, level));
             state = false;
             wire.setState(false);
             resetOvercurrent();

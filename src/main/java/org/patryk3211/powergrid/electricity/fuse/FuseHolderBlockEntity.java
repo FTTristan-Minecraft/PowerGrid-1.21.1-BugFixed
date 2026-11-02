@@ -48,6 +48,7 @@ public class FuseHolderBlockEntity extends ElectricBlockEntity {
     private int overcurrentTicks;
     private long lastOvercurrentTime = Long.MIN_VALUE;
     private double overcurrentPeak;
+    private double overcurrentHeat;
 
     public FuseHolderBlockEntity(BlockEntityType<?> type, BlockPos pos, BlockState state) {
         super(type, pos, state);
@@ -97,6 +98,7 @@ public class FuseHolderBlockEntity extends ElectricBlockEntity {
             return;
         if(!fuseWire.getState()) {
             overcurrentTicks = 0;
+            overcurrentHeat = 0;
             return;
         }
         if(!fuseWire.isConverged())
@@ -104,6 +106,7 @@ public class FuseHolderBlockEntity extends ElectricBlockEntity {
         var current = Math.abs(fuseWire.current());
         if(current <= setting.value) {
             overcurrentTicks = 0;
+            overcurrentHeat = 0;
             return;
         }
         var now = level.getGameTime();
@@ -111,16 +114,20 @@ public class FuseHolderBlockEntity extends ElectricBlockEntity {
         if(now - lastOvercurrentTime > 20) {
             overcurrentTicks = 0;
             overcurrentPeak = 0;
+            overcurrentHeat = 0;
         }
         lastOvercurrentTime = now;
         overcurrentPeak = Math.max(overcurrentPeak, current);
-        if(++overcurrentTicks >= 5) {
+        // A heavy overload melts the fuse faster, 2.2 times its rating blows it at once.
+        overcurrentHeat += (current / setting.value) * (current / setting.value) - 1;
+        if(++overcurrentTicks >= 5 || overcurrentHeat >= 4.0) {
             RateLimitedLog.warn(PowerGrid.LOGGER, "fuse-blown-" + worldPosition.asLong(),
                     "Fuse at {} ({}) BLOWN: current stayed above {} A for {} ticks, peak {} A: {}",
                     GridDiagnostics.position(worldPosition), level.dimension().location(), setting.value,
-                    overcurrentTicks, String.format("%.3f", overcurrentPeak), GridDiagnostics.describe(fuseWire));
+                    overcurrentTicks, String.format("%.3f", overcurrentPeak), GridDiagnostics.describe(fuseWire, level));
             overcurrentTicks = 0;
             overcurrentPeak = 0;
+            overcurrentHeat = 0;
             setState(FuseState.BLOWN);
         }
     }

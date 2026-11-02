@@ -71,6 +71,11 @@ public class TransmissionLinePort extends VoltageSourceCoupling implements IOute
         residual.add(index, Ieq);
     }
 
+    @Override
+    public String toString() {
+        return String.format("TransmissionLinePort(Z=%g, line=%s)", getResistance(), line == null ? "none" : line.getId());
+    }
+
     public TransmissionLinePort getOther() {
         return other;
     }

@@ -70,6 +70,7 @@ public class WorldNetworks extends SavedData implements NetworkGraph.IGraphModif
     private int syncTicks = 0;
     private int idleTicks = 0;
     private int auditTicks = 0;
+    private int shortCheckTicks = 0;
 
     private CompoundTag nbt;
 
@@ -311,6 +312,15 @@ public class WorldNetworks extends SavedData implements NetworkGraph.IGraphModif
         }
         solveNetworks(multiTick, System.nanoTime());
         perf.end();
+
+        var solverConfig = ModdedConfigs.server().electricity.solver;
+        int shortInterval = solverConfig.shortCircuitCheckIntervalTicks.get();
+        int shortLimit = solverConfig.shortCircuitCurrent.get();
+        if(shortInterval > 0 && shortLimit > 0 && ++shortCheckTicks >= shortInterval) {
+            shortCheckTicks = 0;
+            for(var network : subnetworks)
+                ShortCircuitDetector.check(network, world, shortLimit);
+        }
     }
 
     /**

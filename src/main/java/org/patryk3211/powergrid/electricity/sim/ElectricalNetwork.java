@@ -58,6 +58,10 @@ public class ElectricalNetwork implements IStamped {
 
     private int sourceCount;
     private int groundReferenceCount;
+    // Value of `stamp` when the network structure was last changed, tells how fresh a change is.
+    private int lastChangeStamp;
+    // Consecutive short circuit checks which found a problem in this network (see ShortCircuitDetector).
+    private int shortStreak;
     // Number of nodes the solver was allocated for, -1 if it hasn't been allocated.
     private int allocatedNodeCount = -1;
 
@@ -116,6 +120,7 @@ public class ElectricalNetwork implements IStamped {
     // Make sure all variables are completely rebuilt and repopulated.
     public void setDirty() {
         this.dirty = true;
+        this.lastChangeStamp = this.stamp;
     }
 
     public boolean hasHooks() {
@@ -295,7 +300,9 @@ public class ElectricalNetwork implements IStamped {
         }
         if(foreign == null)
             return;
-        RateLimitedLog.warn(LOGGER, "node-possession", "Dropping {} nodes which do not belong to their network, first: {}", foreign.size(), foreign.get(0));
+        var first = foreign.get(0);
+        RateLimitedLog.warn(LOGGER, "node-possession", "Dropping {} nodes which do not belong to their network (first: {}, which now belongs to {}; network: {})",
+                foreign.size(), first, first.getNetwork() == null ? "no network" : "another network", describe());
         for(var node : foreign) {
             int index = -1;
             for(int i = 0; i < nodes.size(); ++i) {
@@ -356,9 +363,9 @@ public class ElectricalNetwork implements IStamped {
      * Short description of the network for diagnostic messages.
      */
     public String describe() {
-        return String.format("nodes=%d wires=%d leafs=%d sources=%d groundRefs=%d hooks=%d converged=%b dirty=%b multiTick=%d",
+        return String.format("nodes=%d wires=%d leafs=%d sources=%d groundRefs=%d hooks=%d converged=%b dirty=%b multiTick=%d lastStructureChange=%d ticks ago",
                 nodes.size(), wires.size(), leafNodes.size(), sourceCount, groundReferenceCount, innerHooks.size(),
-                isConverged(), dirty, currentMultiTick);
+                isConverged(), dirty, currentMultiTick, stamp - lastChangeStamp);
     }
 
     /**
@@ -609,6 +616,18 @@ public class ElectricalNetwork implements IStamped {
 
     public List<INode> getNodes() {
         return nodes;
+    }
+
+    public Collection<AbstractElectricWire> getWires() {
+        return java.util.Collections.unmodifiableSet(wires);
+    }
+
+    public int getShortStreak() {
+        return shortStreak;
+    }
+
+    public void setShortStreak(int streak) {
+        this.shortStreak = streak;
     }
 
     public Collection<IElectricNode> getLeafs() {

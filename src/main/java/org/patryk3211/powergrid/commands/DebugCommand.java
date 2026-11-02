@@ -1,5 +1,7 @@
 package org.patryk3211.powergrid.commands;
 
+import org.patryk3211.powergrid.electricity.ShortCircuitDetector;
+import org.patryk3211.powergrid.collections.ModdedConfigs;
 import com.mojang.brigadier.Command;
 import com.mojang.brigadier.builder.ArgumentBuilder;
 import net.createmod.catnip.data.Pair;
@@ -76,6 +78,24 @@ public class DebugCommand {
                             source.sendSystemMessage(Component.literal("  Closest owned node:").withStyle(ChatFormatting.DARK_GRAY));
                             source.sendSystemMessage(Component.literal("  " + entry.closestOwnedNode()).withStyle(ChatFormatting.DARK_GRAY));
                         }
+                    }
+                    return Command.SINGLE_SUCCESS;
+                }))
+                .then(literal("shorts").executes(ctx -> {
+                    var source = ctx.getSource();
+                    var global = GlobalElectricNetworks.getWorldNetworks((LevelAccessor) source.getLevel());
+                    var limit = ModdedConfigs.server().electricity.solver.shortCircuitCurrent.get();
+                    if(global == null || limit <= 0) {
+                        source.sendSystemMessage(Component.literal(limit <= 0 ? "Short circuit detection is disabled (shortCircuitCurrent = 0)" : "Current level doesn't have any electrical networks"));
+                        return Command.SINGLE_SUCCESS;
+                    }
+                    var findings = ShortCircuitDetector.scan(global, limit);
+                    if(findings.isEmpty()) {
+                        source.sendSystemMessage(Component.literal("No short circuits found in " + global.subnetworks.size() + " networks").withStyle(ChatFormatting.GREEN));
+                    } else {
+                        source.sendSystemMessage(Component.literal("Found " + findings.size() + " networks with a possible short circuit:").withStyle(ChatFormatting.GOLD));
+                        for(var finding : findings.subList(0, Math.min(5, findings.size())))
+                            source.sendSystemMessage(Component.literal(finding).withStyle(ChatFormatting.GRAY));
                     }
                     return Command.SINGLE_SUCCESS;
                 }))

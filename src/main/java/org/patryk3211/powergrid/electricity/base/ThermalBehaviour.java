@@ -366,7 +366,7 @@ public class ThermalBehaviour extends BlockEntityBehaviour implements ISynchroni
     private String describeHeat() {
         return String.format("temperature=%.1f C (limit %.1f C), heating power=%.2f W, sustainable power=%.2f W, %s",
                 temperature, overheatTemperature, lastPower, maxPower(),
-                lastWire != null ? GridDiagnostics.describe(lastWire) : "not heated by a wire");
+                lastWire != null ? GridDiagnostics.describe(lastWire, getWorld()) : "not heated by a wire");
     }
 
     public boolean isOverheated() {

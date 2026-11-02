@@ -90,7 +90,7 @@ public class ModdedItems {
             .tag(ModdedTags.Item.WIRES.tag, ModdedTags.Item.LIGHT_WIRES.tag)
             .register();
     public static final ItemEntry<CordItem> CORD = REGISTRATE.item("copper_cord", CordItem::new)
-            .transform(WireItem.properties(0.0015f, 16, 0.5f, 2.0f, 60,
+            .transform(WireItem.properties(0.0015f, 16, 0.5f, 2.0f, 200,
                     PowerGrid.texture("special/insulated_wire"), 1.005f, 1.005f, 2/16f,
                     true, true, true))
             .register();
