@@ -328,6 +328,34 @@ public class WorldNetworks extends SavedData implements NetworkGraph.IGraphModif
      * Anything which is found is logged, since it points at a bug which created the stale state.
      * @return Number of stale entries which were repaired.
      */
+    /**
+     * Line parts persisted across chunks are normally resolved when their endpoints load, but a line whose endpoints
+     * are both loaded and which still has no simulated line (for example after an endpoint chunk loaded in a different
+     * order) would silently carry no power. Resolve those here.
+     */
+    private int resolveLoadedLines() {
+        int resolved = 0;
+        for(var part : List.copyOf(lineParts.values())) {
+            if(part.getLine() != null)
+                continue;
+            try {
+                if(part.getEndpoint1().isValid(world) && part.getEndpoint2().isValid(world)) {
+                    resolveTree(part.getEndpoint1());
+                    if(part.getLine() == null)
+                        makeTransmissionLine(part);
+                    if(part.getLine() != null) {
+                        ++resolved;
+                        RateLimitedLog.warn(PowerGrid.LOGGER, "audit-unresolved-line",
+                                "Resolved a cross-chunk line which was not being simulated: {}", part);
+                    }
+                }
+            } catch(RuntimeException e) {
+                RateLimitedLog.warn(PowerGrid.LOGGER, "audit-unresolved-line-error", "Failed to resolve line {}: {}", part, e.toString());
+            }
+        }
+        return resolved;
+    }
+
     public int audit() {
         int repairs = 0;
 
@@ -355,6 +383,8 @@ public class WorldNetworks extends SavedData implements NetworkGraph.IGraphModif
                 RateLimitedLog.warn(PowerGrid.LOGGER, "audit-persistent", "Stopped simulating a removed device at {}", behaviour.getPos());
             }
         }
+
+        repairs += resolveLoadedLines();
 
         var partIter = partNodeMap.entrySet().iterator();
         while(partIter.hasNext()) {

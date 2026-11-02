@@ -10,6 +10,12 @@ public class CeilingTileConnectorBlockEntity extends ElectricBlockEntity {
         super(type, pos, state);
     }
 
+    // Wire anchor: lines through unloaded chunks must stay connected, so keep this in the grid without ticking.
+    @Override
+    public boolean usePersistentSimulation() {
+        return true;
+    }
+
     @Override
     public void buildCircuit(CircuitBuilder builder) {
         builder.setTerminalCount(1);

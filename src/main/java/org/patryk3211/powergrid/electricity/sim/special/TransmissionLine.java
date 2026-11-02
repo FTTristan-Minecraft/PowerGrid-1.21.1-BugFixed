@@ -520,6 +520,12 @@ public class TransmissionLine extends ElectricWire {
         var Isum = potentialDifference() * conductance();
         port1.I = -(float) (Isum * 0.5f);
         port2.I = -(float) (Isum * 0.5f);
+        // A line between two energised ends is connected right away. One which starts uncharged is brought up
+        // by the ports themselves, connecting it at once would make it look like a short to its feed.
+        if(Math.abs(node1.getVoltage()) >= 1.0 && Math.abs(node2.getVoltage()) >= 1.0) {
+            port1.markSynced();
+            port2.markSynced();
+        }
         node1.getNetwork().addNode(port1);
         node2.getNetwork().addNode(port2);
     }
