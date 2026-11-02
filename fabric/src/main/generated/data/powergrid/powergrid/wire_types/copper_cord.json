@@ -4,7 +4,7 @@
   "horizontalCoefficient": 1.005,
   "insulated": true,
   "itemsPerMeter": 0.5,
-  "maximumCurrent": 200.0,
+  "maximumCurrent": 500.0,
   "maximumLength": 16.0,
   "resistancePerItem": 0.0015,
   "texture": "powergrid:textures/special/insulated_wire.png",

@@ -85,6 +85,14 @@ public class ThermalBehaviour extends BlockEntityBehaviour implements ISynchroni
 
     private IParticleGenerator particleGenerator = null;
 
+    // A device can take a short, heavy surge (a line being switched in, a motor starting) without being harmed.
+    // Power above SURGE_FACTOR times what it can sustain doesn't heat it while there is credit left. Every surge
+    // tick uses up one credit, credit comes back slowly, so repeated or lasting overloads heat the device normally.
+    private static final double SURGE_FACTOR = 3.0;
+    private static final double SURGE_CREDIT_MAX = 6.0;
+    private static final double SURGE_CREDIT_RECOVERY = 0.1;
+    private double surgeCredit = SURGE_CREDIT_MAX;
+
     // What heated the device last, only used to explain an overheat.
     private double lastPower;
     private AbstractElectricWire lastWire;
@@ -364,8 +372,8 @@ public class ThermalBehaviour extends BlockEntityBehaviour implements ISynchroni
     }
 
     private String describeHeat() {
-        return String.format("temperature=%.1f C (limit %.1f C), heating power=%.2f W, sustainable power=%.2f W, %s",
-                temperature, overheatTemperature, lastPower, maxPower(),
+        return String.format("temperature=%.1f C (limit %.1f C), heating power=%.2f W, sustainable power=%.2f W, surge credit left=%.1f, %s",
+                temperature, overheatTemperature, lastPower, maxPower(), surgeCredit,
                 lastWire != null ? GridDiagnostics.describe(lastWire, getWorld()) : "not heated by a wire");
     }
 
@@ -376,6 +384,15 @@ public class ThermalBehaviour extends BlockEntityBehaviour implements ISynchroni
     public void applyTickPower(double power) {
         lastPower = power;
         if(Double.isFinite(power)) {
+            var sustainable = maxPower();
+            if(sustainable > 0 && power > sustainable * SURGE_FACTOR) {
+                if(surgeCredit >= 1.0) {
+                    surgeCredit -= 1.0;
+                    return;
+                }
+            } else {
+                surgeCredit = Math.min(SURGE_CREDIT_MAX, surgeCredit + SURGE_CREDIT_RECOVERY);
+            }
             var energy = power / 20f;
             temperature += (float) (energy / thermalMass);
         }

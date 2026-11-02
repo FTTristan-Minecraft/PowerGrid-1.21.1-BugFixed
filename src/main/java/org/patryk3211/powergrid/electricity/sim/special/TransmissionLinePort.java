@@ -28,6 +28,8 @@ public class TransmissionLinePort extends VoltageSourceCoupling implements IOute
 
     double I, V;
     private double Ieq;
+    // Own network stamp at the last exchange of voltages with the other end.
+    private int lastExchangeStamp;
 
     public TransmissionLinePort(IElectricNode node, float resistance, TransmissionLine line) {
         this(node, null, resistance, line);
@@ -57,6 +59,8 @@ public class TransmissionLinePort extends VoltageSourceCoupling implements IOute
 
             V = other.positive.getVoltage() + I * getResistance();
             other.V = positive.getVoltage() + I * getResistance();
+            lastExchangeStamp = getStamp();
+            other.lastExchangeStamp = other.getStamp();
         }
     }
 
@@ -74,6 +78,16 @@ public class TransmissionLinePort extends VoltageSourceCoupling implements IOute
     @Override
     public String toString() {
         return String.format("TransmissionLinePort(Z=%g, line=%s)", getResistance(), line == null ? "none" : line.getId());
+    }
+
+    /**
+     * State of this end of a line for diagnostics, includes what it knows about the far end.
+     */
+    public String describeEnds() {
+        var far = other == null ? null : other.getNetwork();
+        return String.format("%s[emf=%.2fV, I=%.2fA, far node=%.2fV, far I=%.2fA, last exchange %d ticks ago, far network: %s]",
+                this, V, I, other == null ? Double.NaN : other.positive.getVoltage(), other == null ? Double.NaN : other.I,
+                getStamp() - lastExchangeStamp, far == null ? "NONE" : far.describe());
     }
 
     public TransmissionLinePort getOther() {

@@ -184,6 +184,10 @@ public final class GridDiagnostics {
                 continue;
             if(listed++ > 0)
                 text.append(", ");
+            if(source instanceof org.patryk3211.powergrid.electricity.sim.special.TransmissionLinePort port) {
+                text.append(port.describeEnds());
+                continue;
+            }
             text.append(String.format("%s(emf=%.2fV, R=%.3f, I=%.2fA)", source.getClass().getSimpleName(),
                     source.getVoltage(), source.getResistance(), source.getCurrent()));
         }

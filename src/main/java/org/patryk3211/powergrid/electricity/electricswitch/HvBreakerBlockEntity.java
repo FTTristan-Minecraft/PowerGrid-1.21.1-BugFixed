@@ -38,6 +38,7 @@ import org.patryk3211.powergrid.config.ThermalValues;
 import org.patryk3211.powergrid.PowerGrid;
 import org.patryk3211.powergrid.electricity.GlobalElectricNetworks;
 import org.patryk3211.powergrid.electricity.GridDiagnostics;
+import org.patryk3211.powergrid.electricity.InrushGuard;
 import org.patryk3211.powergrid.utility.RateLimitedLog;
 import org.patryk3211.powergrid.electricity.base.ThermalBehaviour;
 import org.patryk3211.powergrid.electricity.sim.SwitchedWire;
@@ -64,6 +65,11 @@ public class HvBreakerBlockEntity extends ElectricKineticBlockEntity {
     // A heavy overload must open the breaker long before the 5 tick delay, which it wouldn't survive (it has
     // very little thermal mass). 4 means: 2.2 times the trip current opens it at once, 1.5 times after 4 ticks.
     private static final double TRIP_HEAT = 4.0;
+    // Switching a line in makes it draw a surge for a few ticks, the trip must not react to that (the breaker
+    // has the thermal capacity to ride it out). After this many ticks of settling a real overload trips.
+    private static final int CLOSING_GRACE_TICKS = 10;
+    private long closedAt = Long.MIN_VALUE;
+    private final InrushGuard inrushGuard = new InrushGuard();
 
     public HvBreakerBlockEntity(BlockEntityType<?> typeIn, BlockPos pos, BlockState state) {
         super(typeIn, pos, state);
@@ -127,6 +133,8 @@ public class HvBreakerBlockEntity extends ElectricKineticBlockEntity {
         }
         state = closed;
         resetOvercurrent();
+        if(closed)
+            closedAt = level.getGameTime();
         if(wire != null) {
             wire.setState(state);
         } else {
@@ -192,6 +200,8 @@ public class HvBreakerBlockEntity extends ElectricKineticBlockEntity {
             return;
 
         var now = level.getGameTime();
+        if(inrushGuard.ignores(wire.getNetwork(), now - closedAt < CLOSING_GRACE_TICKS))
+            return;
         var current = Math.abs(wire.current());
         var limit = setting.getValue();
         if(current <= limit) {

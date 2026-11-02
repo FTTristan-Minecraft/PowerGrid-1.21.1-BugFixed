@@ -15,6 +15,7 @@
  */
 package org.patryk3211.powergrid.electricity.sim.special;
 
+import org.patryk3211.powergrid.utility.RateLimitedLog;
 import net.createmod.ponder.api.level.PonderLevel;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -546,9 +547,34 @@ public class TransmissionLine extends ElectricWire {
         return node2.getVoltage();
     }
 
-    public void tick() {
-        if(port1 == null)
+    /**
+     * A line is either a wire inside of a network or a pair of ports between two networks. A line which is neither
+     * (its wire was dropped as stale while its ends are in different networks) carries nothing, the lines beyond
+     * it are cut off. Gives such a line back the form it should have.
+     */
+    private void repairIfDisconnected() {
+        if(network != null || segments.isEmpty() || segments.get(0).getLine() != this)
             return;
+        var net1 = node1.getNetwork();
+        var net2 = node2.getNetwork();
+        if(net1 == null || net2 == null)
+            return;
+        RateLimitedLog.warn(PowerGrid.LOGGER, "line-reconnect-" + id, "Reconnecting {} which was left without a network or ports", this);
+        if(net1 == net2) {
+            net1.addWire(this);
+        } else if(WorldNetworks.canWeakCouple(this)) {
+            makePortPair();
+        } else {
+            net1.merge(net2);
+            net1.addWire(this);
+        }
+    }
+
+    public void tick() {
+        if(port1 == null) {
+            repairIfDisconnected();
+            return;
+        }
         if(node1.getNetwork() == node2.getNetwork()) {
             port1.remove();
             port2.remove();

@@ -4,7 +4,7 @@
   "horizontalCoefficient": 1.0075,
   "insulated": false,
   "itemsPerMeter": 0.5,
-  "maximumCurrent": 160.0,
+  "maximumCurrent": 400.0,
   "maximumLength": 64.0,
   "resistancePerItem": 0.005,
   "texture": "powergrid:textures/special/iron_wire.png",

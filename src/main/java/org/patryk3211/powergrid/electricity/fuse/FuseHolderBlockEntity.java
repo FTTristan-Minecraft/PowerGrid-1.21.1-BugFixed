@@ -31,6 +31,7 @@ import net.minecraft.world.phys.Vec3;
 import org.patryk3211.powergrid.PowerGrid;
 import org.patryk3211.powergrid.collections.ModdedItems;
 import org.patryk3211.powergrid.electricity.GridDiagnostics;
+import org.patryk3211.powergrid.electricity.InrushGuard;
 import org.patryk3211.powergrid.utility.RateLimitedLog;
 import org.patryk3211.powergrid.collections.ModdedSoundEvents;
 import org.patryk3211.powergrid.electricity.base.ElectricBlockEntity;
@@ -49,6 +50,7 @@ public class FuseHolderBlockEntity extends ElectricBlockEntity {
     private long lastOvercurrentTime = Long.MIN_VALUE;
     private double overcurrentPeak;
     private double overcurrentHeat;
+    private final InrushGuard inrushGuard = new InrushGuard();
 
     public FuseHolderBlockEntity(BlockEntityType<?> type, BlockPos pos, BlockState state) {
         super(type, pos, state);
@@ -104,6 +106,8 @@ public class FuseHolderBlockEntity extends ElectricBlockEntity {
         if(!fuseWire.isConverged())
             return;
         var current = Math.abs(fuseWire.current());
+        if(current > setting.value && inrushGuard.ignores(fuseWire.getNetwork(), false))
+            return;
         if(current <= setting.value) {
             overcurrentTicks = 0;
             overcurrentHeat = 0;

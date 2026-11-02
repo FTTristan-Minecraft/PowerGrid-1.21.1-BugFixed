@@ -4,7 +4,7 @@
   "horizontalCoefficient": 1.02,
   "insulated": false,
   "itemsPerMeter": 0.5,
-  "maximumCurrent": 160.0,
+  "maximumCurrent": 400.0,
   "maximumLength": 12.0,
   "resistancePerItem": 0.003,
   "texture": "powergrid:textures/special/golden_wire.png",

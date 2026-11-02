@@ -618,6 +618,14 @@ public class ElectricalNetwork implements IStamped {
         return nodes;
     }
 
+    /**
+     * @return How many solver ticks ago the structure of the network last changed. Just after a change the solution
+     * is still settling and currents are not representative (switching a long line in causes a short surge).
+     */
+    public int ticksSinceStructureChange() {
+        return stamp - lastChangeStamp;
+    }
+
     public Collection<AbstractElectricWire> getWires() {
         return java.util.Collections.unmodifiableSet(wires);
     }
