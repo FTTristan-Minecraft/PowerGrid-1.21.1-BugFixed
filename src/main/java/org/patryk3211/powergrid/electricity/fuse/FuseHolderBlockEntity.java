@@ -47,7 +47,9 @@ public class FuseHolderBlockEntity extends ElectricBlockEntity {
 
     private FuseState state;
     private int overcurrentTicks;
-    private long lastOvercurrentTime = Long.MIN_VALUE;
+    // Game time which is long enough ago to never count as recent, Long.MIN_VALUE would overflow when subtracted from.
+    private static final long NEVER = InrushGuard.NEVER;
+    private long lastOvercurrentTime = NEVER;
     private double overcurrentPeak;
     private double overcurrentHeat;
     private final InrushGuard inrushGuard = new InrushGuard();
@@ -106,7 +108,7 @@ public class FuseHolderBlockEntity extends ElectricBlockEntity {
         if(!fuseWire.isConverged())
             return;
         var current = Math.abs(fuseWire.current());
-        if(current > setting.value && inrushGuard.ignores(fuseWire.getNetwork(), false))
+        if(current > setting.value && inrushGuard.ignores(fuseWire.getNetwork(), level.getGameTime(), InrushGuard.NEVER))
             return;
         if(current <= setting.value) {
             overcurrentTicks = 0;

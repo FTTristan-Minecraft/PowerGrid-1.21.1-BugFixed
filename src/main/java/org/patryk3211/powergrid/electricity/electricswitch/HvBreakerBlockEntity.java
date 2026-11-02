@@ -57,7 +57,9 @@ public class HvBreakerBlockEntity extends ElectricKineticBlockEntity {
     private boolean redstoneState;
     private int splitCooldown;
     private int overcurrentTicks;
-    private long lastOvercurrentTime = Long.MIN_VALUE;
+    // Game time which is long enough ago to never count as recent, Long.MIN_VALUE would overflow when subtracted from.
+    private static final long NEVER = InrushGuard.NEVER;
+    private long lastOvercurrentTime = NEVER;
     // Highest current seen during the running overcurrent streak, reported when the breaker trips.
     private double overcurrentPeak;
     // Sum of ((I / limit)^2 - 1) over the streak, a measure of how much heat the overload has put into the breaker.
@@ -67,8 +69,7 @@ public class HvBreakerBlockEntity extends ElectricKineticBlockEntity {
     private static final double TRIP_HEAT = 4.0;
     // Switching a line in makes it draw a surge for a few ticks, the trip must not react to that (the breaker
     // has the thermal capacity to ride it out). After this many ticks of settling a real overload trips.
-    private static final int CLOSING_GRACE_TICKS = 10;
-    private long closedAt = Long.MIN_VALUE;
+    private long closedAt = NEVER;
     private final InrushGuard inrushGuard = new InrushGuard();
 
     public HvBreakerBlockEntity(BlockEntityType<?> typeIn, BlockPos pos, BlockState state) {
@@ -118,6 +119,8 @@ public class HvBreakerBlockEntity extends ElectricKineticBlockEntity {
         assert level != null;
         super.initialize();
         redstoneState = level.getBestNeighborSignal(worldPosition) > 0;
+        // A breaker which is loaded closed energises its lines right now, that is a switching surge as well.
+        closedAt = level.getGameTime();
     }
 
     /**
@@ -185,7 +188,7 @@ public class HvBreakerBlockEntity extends ElectricKineticBlockEntity {
         overcurrentTicks = 0;
         overcurrentPeak = 0;
         overcurrentHeat = 0;
-        lastOvercurrentTime = Long.MIN_VALUE;
+        lastOvercurrentTime = NEVER;
     }
 
     private void simulationProtectionTick(String origin) {
@@ -200,12 +203,19 @@ public class HvBreakerBlockEntity extends ElectricKineticBlockEntity {
             return;
 
         var now = level.getGameTime();
-        if(inrushGuard.ignores(wire.getNetwork(), now - closedAt < CLOSING_GRACE_TICKS))
-            return;
         var current = Math.abs(wire.current());
         var limit = setting.getValue();
         if(current <= limit) {
             resetOvercurrent();
+            inrushGuard.reset();
+            return;
+        }
+        if(inrushGuard.ignores(wire.getNetwork(), now, closedAt)) {
+            RateLimitedLog.warn(PowerGrid.LOGGER, "hv-breaker-ridethrough-" + worldPosition.asLong(),
+                    "HV breaker at {} ({}) carries {} A, above its trip current of {} A, but the network is still settling "
+                            + "(last change {} ticks ago), riding it out: {}",
+                    GridDiagnostics.position(worldPosition), level.dimension().location(), String.format("%.1f", current), limit,
+                    wire.getNetwork() == null ? -1 : wire.getNetwork().ticksSinceStructureChange(), GridDiagnostics.describe(wire, level));
             return;
         }
         // Readings which are far apart are not one streak, this keeps old counts from tripping the breaker later.

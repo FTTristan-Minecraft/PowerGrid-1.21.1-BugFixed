@@ -18,7 +18,7 @@ public class InrushGuardTests extends TestHelper {
     @Test
     void settledNetworkIsNotIgnored() {
         var Net = settledNetwork();
-        Assertions.assertFalse(new InrushGuard().ignores(Net.network, false));
+        Assertions.assertFalse(new InrushGuard().ignores(Net.network, 1000, InrushGuard.NEVER));
     }
 
     @Test
@@ -26,10 +26,10 @@ public class InrushGuardTests extends TestHelper {
         var Net = settledNetwork();
         var guard = new InrushGuard();
         Net.network.setDirty();
-        Assertions.assertTrue(guard.ignores(Net.network, false), "A fresh change must be ridden out");
+        Assertions.assertTrue(guard.ignores(Net.network, 1000, InrushGuard.NEVER), "A fresh change must be ridden out");
         for(int i = 0; i < InrushGuard.SETTLING_TICKS + 1; ++i)
             Net.calculate();
-        Assertions.assertFalse(guard.ignores(Net.network, false), "Once settled an overload counts again");
+        Assertions.assertFalse(guard.ignores(Net.network, 1000, InrushGuard.NEVER), "Once settled an overload counts again");
     }
 
     @Test
@@ -39,7 +39,7 @@ public class InrushGuardTests extends TestHelper {
         int ignored = 0;
         for(int i = 0; i < 100; ++i) {
             Net.network.setDirty();
-            if(guard.ignores(Net.network, false))
+            if(guard.ignores(Net.network, 1000, InrushGuard.NEVER))
                 ++ignored;
         }
         Assertions.assertEquals(InrushGuard.MAX_IGNORED_TICKS, ignored);
@@ -48,6 +48,22 @@ public class InrushGuardTests extends TestHelper {
     @Test
     void switchingOnIsRiddenOutEvenInASettledNetwork() {
         var Net = settledNetwork();
-        Assertions.assertTrue(new InrushGuard().ignores(Net.network, true));
+        Assertions.assertTrue(new InrushGuard().ignores(Net.network, 1000, 995));
+    }
+
+    @Test
+    void aDeviceWhichWasNeverSwitchedIsNotRecentlySwitched() {
+        // Regression: the "never" marker used to overflow and make every device look freshly switched.
+        var Net = settledNetwork();
+        for(int i = 0; i < 100; ++i)
+            Assertions.assertFalse(new InrushGuard().ignores(Net.network, 5000 + i, InrushGuard.NEVER));
+    }
+
+    @Test
+    void switchingSurgeEndsAfterTheSwitchingTime() {
+        var Net = settledNetwork();
+        var guard = new InrushGuard();
+        Assertions.assertTrue(guard.ignores(Net.network, 1009, 1000));
+        Assertions.assertFalse(guard.ignores(Net.network, 1010 + InrushGuard.SWITCHING_TICKS, 1000));
     }
 }
