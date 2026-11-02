@@ -44,6 +44,12 @@ import org.patryk3211.powergrid.kinetics.base.ElectricKineticBlockEntity;
 import java.util.List;
 
 public class HvSwitchBlockEntity extends ElectricKineticBlockEntity implements SparkSoundOwner {
+    // Transmits or supplies power without consuming any, so it stays in the grid while its chunk doesn't tick.
+    @Override
+    public boolean usePersistentSimulation() {
+        return true;
+    }
+
     protected LerpedFloat rod;
     @Nullable
     private SwitchedWire wire;

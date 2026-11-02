@@ -46,7 +46,7 @@ def configureTask = { String platform, String taskName, String libName ->
         try {
             def args = [ "${platformProperty('cmakeExecutable')}", '-S', "${project.layout.projectDirectory}",
                 '-B', "${cmakeBuildDir}",
-                '-D', "JVM_INCLUDE=${jvmHome}/include;${jvmHome}/include/${platform}",
+                '-D', "JVM_INCLUDE=${jvmHome}/include;${jvmHome}/include/${platform == 'windows' ? 'win32' : 'linux'}${platform == 'windows' ? ';' + project.layout.projectDirectory + '/mingw/include' : ''}",
                 '-D', 'CMAKE_EXPORT_COMPILE_COMMANDS=true',
                 '-D', "CMAKE_BUILD_TYPE=${platformProperty('cmakeBuildType')}",
                 '-D', "PG_TRACE=${project.nativeTrace}",
@@ -54,6 +54,9 @@ def configureTask = { String platform, String taskName, String libName ->
                 '-D', "PG_NATIVE_VERSION=${project.nativeVersionSuffix}",
                 '-D', "PG_STATIC_LIBS=${platformProperty('staticLibs')}",
                 '-G', "${platformProperty('cmakeGenerator')}" ]
+                if(platform == 'windows') {
+                    args.addAll(['-D', "CMAKE_TOOLCHAIN_FILE=${project.layout.projectDirectory}/mingw-w64-toolchain.cmake"])
+                }
             System.out.println(String.join(" ", args));
             def cmakeConf = providers.exec {
                 commandLine args
@@ -67,6 +70,8 @@ def configureTask = { String platform, String taskName, String libName ->
 
     if(buildAvailable) {
         System.out.println("Native build for platform '${platform}' configured successfully.")
+    } else if(platform == 'windows') {
+        throw new GradleException("Windows native build configuration failed; ${platformProperty('cmakeExecutable')} and the MinGW toolchain are required")
     } else {
         System.out.println("Configuring native build for platform '${platform}' has failed. Task will be skipped.")
     }

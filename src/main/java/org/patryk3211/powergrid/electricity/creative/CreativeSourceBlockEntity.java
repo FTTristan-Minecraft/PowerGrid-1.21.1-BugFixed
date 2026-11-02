@@ -39,6 +39,12 @@ import org.patryk3211.powergrid.utility.Unit;
 import java.util.List;
 
 public class CreativeSourceBlockEntity extends ElectricBlockEntity implements IHaveGoggleInformation {
+    // Transmits or supplies power without consuming any, so it stays in the grid while its chunk doesn't tick.
+    @Override
+    public boolean usePersistentSimulation() {
+        return true;
+    }
+
     private CreativeSourceValueBehaviour value;
 
     private CurrentSourceNode currentSourceNode;

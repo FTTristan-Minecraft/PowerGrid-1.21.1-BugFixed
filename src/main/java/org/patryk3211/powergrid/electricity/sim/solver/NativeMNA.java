@@ -15,6 +15,7 @@
  */
 package org.patryk3211.powergrid.electricity.sim.solver;
 
+import org.patryk3211.powergrid.utility.RateLimitedLog;
 import net.minecraft.Util;
 import org.patryk3211.powergrid.PowerGrid;
 import org.patryk3211.powergrid.collections.ModdedConfigs;
@@ -27,11 +28,14 @@ import java.nio.ByteOrder;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.util.Arrays;
+import java.util.Locale;
 
 import static org.patryk3211.powergrid.electricity.sim.ElectricalNetwork.LOGGER;
 
 public class NativeMNA implements IMNA {
-    private static final String EXPECTED_VERSION = "8";
+    private static final String EXPECTED_VERSION = "9";
 
     private static final int OPERATION_BUFFER_COMMAND_LENGTH = 256;
     private static final int JACOBIAN_COMMAND_SIZE = Integer.BYTES * 2 + Double.BYTES;
@@ -45,7 +49,11 @@ public class NativeMNA implements IMNA {
 
     public final ElectricalNetwork network;
 
-    private final long nativePtr;
+    private long nativePtr;
+    // Set whenever the matrix or hooks change, a quiescent network is only skipped when nothing was written.
+    private boolean solveRequired = true;
+    private boolean rhsWritten = true;
+    private boolean lastSolveHadRhs = true;
 
     private boolean hooksChanged = true;
     protected boolean converged;
@@ -63,67 +71,100 @@ public class NativeMNA implements IMNA {
         return supported;
     }
 
+    /**
+     * @return Platform identifier ("&lt;os&gt;-&lt;arch&gt;") of the running JVM, or null if the operating system isn't supported.
+     * It names the folder inside the jar which contains the binary for this platform.
+     */
+    static String platformId() {
+        var os = switch (Util.getPlatform()) {
+            case LINUX -> "linux";
+            case WINDOWS -> "windows";
+            case OSX -> "macos";
+            default -> null;
+        };
+        if (os == null)
+            return null;
+        var arch = switch (System.getProperty("os.arch", "").toLowerCase(Locale.ROOT)) {
+            case "amd64", "x86_64", "x64" -> "x86_64";
+            case "aarch64", "arm64" -> "aarch64";
+            case "arm", "armv7", "armv7l", "armv8l" -> "armv7";
+            case "riscv64" -> "riscv64";
+            case "x86", "i386", "i486", "i586", "i686" -> "x86";
+            default -> System.getProperty("os.arch", "unknown").toLowerCase(Locale.ROOT);
+        };
+        return os + "-" + arch;
+    }
+
+    private static String libraryFileName() {
+        var extension = switch (Util.getPlatform()) {
+            case WINDOWS -> ".dll";
+            case OSX -> ".dylib";
+            default -> ".so";
+        };
+        return "libpowergridNative" + EXPECTED_VERSION + extension;
+    }
+
+    private static boolean verifyAndMarkSupported() {
+        if (verifySupport() == 0) {
+            PowerGrid.LOGGER.info(MESSAGE_OK);
+            supported = true;
+        } else {
+            PowerGrid.LOGGER.error(MESSAGE_FAIL);
+        }
+        return supported;
+    }
+
     public static void tryLoad() {
         try {
             // Try load from path first
             System.loadLibrary("powergridNative" + EXPECTED_VERSION);
-            if (verifySupport() == 0) {
-                PowerGrid.LOGGER.info(MESSAGE_OK);
-                supported = true;
-            } else {
-                PowerGrid.LOGGER.error(MESSAGE_FAIL);
-            }
+            verifyAndMarkSupported();
         } catch (Throwable e) {
             try {
+                var platform = platformId();
+                if (platform == null) {
+                    PowerGrid.LOGGER.error(MESSAGE_FAIL, e);
+                    return;
+                }
+                var libName = libraryFileName();
                 Files.createDirectories(NATIVES_DIR);
-                var libName = switch (Util.getPlatform()) {
-                    case LINUX -> "libpowergridNative" + EXPECTED_VERSION + ".so";
-                    case WINDOWS -> "libpowergridNative" + EXPECTED_VERSION + ".dll";
-                    default -> throw new IllegalArgumentException("Unsupported platform!");
-                };
-                var libPath = NATIVES_DIR.resolve(libName);
+                // Binaries of different platforms may share the directory (for instance when it is synced between machines).
+                var libPath = NATIVES_DIR.resolve(platform + "-" + libName);
                 var loaded = true;
-                if (!Files.exists(libPath)) {
-                    // Try extracting the embedded files
-                    var platformFolder = switch (Util.getPlatform()) {
-                        case LINUX -> "linux";
-                        case WINDOWS -> "windows";
-                        default -> null;
-                    };
-                    if (platformFolder == null) {
-                        // Platform not available in jar
-                        PowerGrid.LOGGER.error(MESSAGE_FAIL, e);
-                        throw new IllegalStateException("Power Grid native solver is unsupported on this operating system", e);
+
+                // Always compare with the binary embedded in the jar so that a stale or modified
+                // copy left in the natives directory is never loaded.
+                byte[] embedded = null;
+                var loader = NativeMNA.class.getClassLoader();
+                try (var stream = loader.getResourceAsStream("native/" + platform + "/" + libName)) {
+                    if (stream != null)
+                        embedded = stream.readAllBytes();
+                }
+                if (embedded != null) {
+                    if (!Files.exists(libPath) || !Arrays.equals(Files.readAllBytes(libPath), embedded)) {
+                        var temporary = Files.createTempFile(NATIVES_DIR, libName, ".tmp");
+                        try {
+                            Files.write(temporary, embedded);
+                            Files.move(temporary, libPath, StandardCopyOption.REPLACE_EXISTING);
+                        } finally {
+                            Files.deleteIfExists(temporary);
+                        }
+                        PowerGrid.LOGGER.info("Extracted native binary '{}' for {} from jar", libName, platform);
                     }
-                    var loader = NativeMNA.class.getClassLoader();
-                    var stream = loader.getResourceAsStream("native/" + platformFolder + "/" + libName);
-                    if (stream != null) {
-                        Files.copy(stream, libPath);
-                        PowerGrid.LOGGER.info("Extracted native binary '{}' from jar", libName);
-                    } else {
-                        PowerGrid.LOGGER.error(MESSAGE_FAIL, e);
-                        loaded = false;
-                    }
+                } else if (!Files.exists(libPath)) {
+                    PowerGrid.LOGGER.error("No native solver binary is available for platform '{}'", platform);
+                    loaded = false;
                 }
                 if (loaded) {
                     System.load(libPath.toAbsolutePath().toString());
-                    if (verifySupport() == 0) {
-                        PowerGrid.LOGGER.info(MESSAGE_OK);
-                        supported = true;
-                    } else {
-                        PowerGrid.LOGGER.error(MESSAGE_FAIL);
-                    }
+                    verifyAndMarkSupported();
                 }
             } catch (Throwable e2) {
                 PowerGrid.LOGGER.error(MESSAGE_FAIL, e2);
             }
         }
         if(!supported)
-            throw new IllegalStateException("Power Grid requires native solver binary 'libpowergridNative" + EXPECTED_VERSION + ".so' (Linux) or 'powergridNative" + EXPECTED_VERSION + ".dll' (Windows)");
-    }
-
-    private static void loadBinary() {
-
+            PowerGrid.LOGGER.error("Native solver is unavailable, falling back to the Java solver backend");
     }
 
     public NativeMNA(ElectricalNetwork network) {
@@ -137,6 +178,14 @@ public class NativeMNA implements IMNA {
         jacobianOps = ByteBuffer.allocateDirect(JACOBIAN_COMMAND_SIZE * OPERATION_BUFFER_COMMAND_LENGTH);
         jacobianOps.order(ByteOrder.nativeOrder());
         nativePtr = allocateNativeObject(rhsOps, jacobianOps, OPERATION_BUFFER_COMMAND_LENGTH, auxBuf);
+        if(nativePtr == 0)
+            throw new IllegalStateException("Failed to allocate the native solver");
+    }
+
+    private long ptr() {
+        if(nativePtr == 0)
+            throw new IllegalStateException("The native solver has already been cleaned up");
+        return nativePtr;
     }
 
     @Override
@@ -146,19 +195,25 @@ public class NativeMNA implements IMNA {
 
     @Override
     public void cleanup() {
-        deallocateNativeObject(nativePtr);
+        if(nativePtr == 0)
+            return;
+        var pointer = nativePtr;
+        nativePtr = 0;
+        deallocateNativeObject(pointer);
         // State buffer is NOT valid after destructors of native solver have been called.
         stateBuffer = null;
     }
 
     @Override
     public void setPrecision(double absoluteCriterion, double relativeCriterion, double minimumPrecision, double searchAlpha) {
-        setPrecision(nativePtr, absoluteCriterion, relativeCriterion, minimumPrecision, searchAlpha);
+        solveRequired = true;
+        setPrecision(ptr(), absoluteCriterion, relativeCriterion, minimumPrecision, searchAlpha);
     }
 
     @Override
     public void hooksChanged() {
         hooksChanged = true;
+        solveRequired = true;
     }
 
     @Override
@@ -175,7 +230,8 @@ public class NativeMNA implements IMNA {
     @Override
     public void allocate(int size) {
         this.size = size;
-        setStateSize(nativePtr, size);
+        solveRequired = true;
+        setStateSize(ptr(), size);
         // We need to wait until the backend gives us a handle to the newly allocated buffer.
         stateBuffer = null;
 
@@ -188,25 +244,27 @@ public class NativeMNA implements IMNA {
     public void jacobianAdd(int row, int column, double value) {
         if(value == 0)
             return;
+        solveRequired = true;
         jacobianOps.putInt(row);
         jacobianOps.putInt(column);
         jacobianOps.putDouble(value);
 
         if(jacobianOps.position() == jacobianOps.capacity()) {
             // Ran out of space, send buffer to native for processing.
-            processJacobianBuffer(nativePtr, OPERATION_BUFFER_COMMAND_LENGTH);
+            processJacobianBuffer(ptr(), OPERATION_BUFFER_COMMAND_LENGTH);
             jacobianOps.position(0);
         }
     }
 
     @Override
     public void rhsAdd(int row, double value) {
+        rhsWritten = true;
         rhsOps.putInt(row);
         rhsOps.putDouble(value);
 
         if(rhsOps.position() == rhsOps.capacity()) {
             // Ran out of space, send buffer to native for processing.
-            processRHSBuffer(nativePtr);
+            processRHSBuffer(ptr());
             rhsOps.position(0);
         }
     }
@@ -250,7 +308,7 @@ public class NativeMNA implements IMNA {
     private void reportConvergenceProblems(double norm, int i, ByteBuffer residualBuffer) {
         if (LOGGER != null) {
             if (ModdedConfigs.logsEnabled()) {
-                LOGGER.warn("Convergence problems after {} solver iterations, final norm: {}", i, norm);
+                RateLimitedLog.warn(LOGGER, "native-mna-convergence", "Convergence problems after {} solver iterations, final norm: {}", i, norm);
             }
         } else {
             System.out.printf("Convergence problems after %d solver iterations, final norm: %g\n", i, norm);
@@ -281,11 +339,17 @@ public class NativeMNA implements IMNA {
 
     @Override
     public void singleTick() {
-        // Skip fully idle solves whenever nothing changed. This keeps the native backend stable
-        // after long offline periods and avoids pointless work while the grid is quiescent.
-        if(rhsOps.position() == 0 && jacobianOps.position() == 0 && !hooksChanged && converged) {
+        // Skip fully idle solves whenever nothing changed. A solve is only skipped when neither the matrix
+        // nor the right hand side were written to since the last solve (an RHS which just dropped to zero
+        // still has to be solved for), this keeps the grid stable and avoids pointless work.
+        boolean rhsActive = rhsWritten;
+        if(!rhsActive && !lastSolveHadRhs && !solveRequired && !hooksChanged && converged
+                && rhsOps.position() == 0 && jacobianOps.position() == 0) {
             return;
         }
+        lastSolveHadRhs = rhsActive;
+        rhsWritten = false;
+        solveRequired = false;
 
         // Finalize modification buffers.
         rhsOps.putInt(-1);
@@ -297,13 +361,13 @@ public class NativeMNA implements IMNA {
 
         if(hooksChanged) {
             boolean hasIterHooks = !network.innerHooks.isEmpty();
-            setHookPresence(nativePtr, hasIterHooks, hasIterHooks);
+            setHookPresence(ptr(), hasIterHooks, hasIterHooks);
             hooksChanged = false;
         }
 
         // Run native solve routine.
         int maxIterations = network.maxIterations.apply(network.hasHooks());
-        stateBuffer = singleTick(nativePtr, maxIterations, ops);
+        stateBuffer = singleTick(ptr(), maxIterations, ops);
         if(stateBuffer != null)
             stateBuffer.order(ByteOrder.nativeOrder());
         byte status = auxBuf.get(0);
@@ -317,24 +381,26 @@ public class NativeMNA implements IMNA {
 
     @Override
     public void zeroRHS() {
-        zeroRHS(nativePtr);
+        zeroRHS(ptr());
     }
 
     @Override
     public void zeroState() {
-        zeroState(nativePtr);
+        zeroState(ptr());
         converged = true;
     }
 
     @Override
     public void jacobianPrepareForWrite() {
         jacobianOps.position(0);
-        zeroJacobian(nativePtr);
+        solveRequired = true;
+        zeroJacobian(ptr());
     }
 
     @Override
     public void finishJacobianWrite() {
-        finishJacobianWrite(nativePtr, jacobianOps.position() / JACOBIAN_COMMAND_SIZE);
+        solveRequired = true;
+        finishJacobianWrite(ptr(), jacobianOps.position() / JACOBIAN_COMMAND_SIZE);
         jacobianOps.position(0);
     }
 

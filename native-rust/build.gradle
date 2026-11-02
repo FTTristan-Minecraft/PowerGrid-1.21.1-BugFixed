@@ -1,0 +1,135 @@
+import org.gradle.nativeplatform.platform.internal.DefaultNativePlatform
+
+plugins {
+    id 'base'
+}
+
+// Must match EXPECTED_VERSION in NativeMNA.java
+def nativeVersionSuffix = '9'
+
+// Every platform Minecraft: Java Edition runs on. The id is "<os>-<arch>" and is also the directory name
+// inside the jar (native/<id>/), NativeMNA derives the same id at runtime.
+def allTargets = [
+        [id: 'linux-x86_64',    triple: 'x86_64-unknown-linux-gnu',       zigSuffix: '.2.17', cargoLib: 'libnative_rust.so',    lib: "libpowergridNative${nativeVersionSuffix}.so"],
+        [id: 'linux-aarch64',   triple: 'aarch64-unknown-linux-gnu',      zigSuffix: '.2.17', cargoLib: 'libnative_rust.so',    lib: "libpowergridNative${nativeVersionSuffix}.so"],
+        [id: 'linux-armv7',     triple: 'armv7-unknown-linux-gnueabihf',  zigSuffix: '.2.17', cargoLib: 'libnative_rust.so',    lib: "libpowergridNative${nativeVersionSuffix}.so"],
+        [id: 'linux-riscv64',   triple: 'riscv64gc-unknown-linux-gnu',    zigSuffix: '.2.27', cargoLib: 'libnative_rust.so',    lib: "libpowergridNative${nativeVersionSuffix}.so"],
+        [id: 'windows-x86_64',  triple: 'x86_64-pc-windows-gnu',          zigSuffix: '',      cargoLib: 'native_rust.dll',      lib: "libpowergridNative${nativeVersionSuffix}.dll"],
+        [id: 'windows-aarch64', triple: 'aarch64-pc-windows-gnullvm',     zigSuffix: '',      cargoLib: 'native_rust.dll',      lib: "libpowergridNative${nativeVersionSuffix}.dll"],
+        [id: 'macos-x86_64',    triple: 'x86_64-apple-darwin',            zigSuffix: '',      cargoLib: 'libnative_rust.dylib', lib: "libpowergridNative${nativeVersionSuffix}.dylib"],
+        [id: 'macos-aarch64',   triple: 'aarch64-apple-darwin',           zigSuffix: '',      cargoLib: 'libnative_rust.dylib', lib: "libpowergridNative${nativeVersionSuffix}.dylib"],
+]
+
+def normalizeArch = { String arch ->
+    switch (arch.toLowerCase()) {
+        case ['amd64', 'x86_64', 'x64']: return 'x86_64'
+        case ['aarch64', 'arm64']: return 'aarch64'
+        case ['arm', 'armv7l', 'armv8l']: return 'armv7'
+        default: return arch.toLowerCase()
+    }
+}
+
+def os = DefaultNativePlatform.currentOperatingSystem
+def hostOs = os.isWindows() ? 'windows' : (os.isMacOsX() ? 'macos' : 'linux')
+def hostId = "${hostOs}-${normalizeArch(System.getProperty('os.arch'))}".toString()
+def hostTriple = null
+try {
+    def proc = ['rustc', '-vV'].execute()
+    def out = proc.text
+    proc.waitFor()
+    hostTriple = out.readLines().find { it.startsWith('host:') }?.substring(5)?.trim()
+} catch (Exception ignored) {
+}
+
+def commandSucceeds = { List<String> command ->
+    try {
+        def proc = command.execute()
+        proc.consumeProcessOutput(new StringBuffer(), new StringBuffer())
+        return proc.waitFor() == 0
+    } catch (Exception ignored) {
+        return false
+    }
+}
+
+// Cross compilation is done with zig as the linker, it can target every platform above from any host.
+def hasZigbuild = commandSucceeds(['cargo', 'zigbuild', '--help']) && commandSucceeds(['zig', 'version'])
+def hasMingw = commandSucceeds(['x86_64-w64-mingw32-gcc', '--version'])
+def requireAll = project.findProperty('requireAllNatives') == 'true'
+
+ext.hostId = hostId
+def nativesDir = layout.buildDirectory.dir('natives')
+
+def buildable = []
+def skipped = []
+allTargets.each { t ->
+    // A Windows machine with the MSVC toolchain builds its own platform with the default MSVC target.
+    def msvcHost = !hasZigbuild && t.id == hostId && hostTriple?.endsWith('windows-msvc')
+    if (msvcHost)
+        t = t + [triple: hostTriple]
+    // Without zig only the host platform (and Windows x86_64 through MinGW) can be built.
+    def isHost = (t.triple == hostTriple)
+    def mingw = (t.id == 'windows-x86_64' && hasMingw)
+    if (!hasZigbuild && !isHost && !mingw) {
+        skipped << t.id
+        return
+    }
+    buildable << t.id
+
+    // zig also lets us pin the glibc version, which keeps the Linux binaries usable on older distributions.
+    def useZig = hasZigbuild
+    def cargoTarget = useZig ? "${t.triple}${t.zigSuffix}".toString() : t.triple
+    def cargoTask = tasks.register("cargoBuild_${t.id}", Exec) {
+        workingDir project.projectDir
+        inputs.files(fileTree('src'), file('Cargo.toml'), file('Cargo.lock'))
+        outputs.file(layout.projectDirectory.file("target/${t.triple}/release/${t.cargoLib}"))
+        doFirst {
+            // Make sure the standard library of the target is available (no-op if already installed).
+            project.exec {
+                commandLine 'rustup', 'target', 'add', t.triple
+                ignoreExitValue = true
+                standardOutput = new ByteArrayOutputStream()
+                errorOutput = new ByteArrayOutputStream()
+            }
+        }
+        if (msvcHost) {
+            // Link the C runtime statically so the library doesn't depend on the VC redistributable.
+            environment 'RUSTFLAGS', '-C target-feature=+crt-static'
+        }
+        if (useZig)
+            commandLine 'cargo', 'zigbuild', '--release', '--locked', '--target', cargoTarget
+        else
+            commandLine 'cargo', 'build', '--release', '--locked', '--target', cargoTarget
+    }
+
+    tasks.register("build_${t.id}", Sync) {
+        dependsOn cargoTask
+        from(layout.projectDirectory.file("target/${t.triple}/release/${t.cargoLib}")) {
+            rename { t.lib }
+        }
+        into(nativesDir.map { it.dir(t.id) })
+    }
+}
+
+if (!buildable.contains(hostId)) {
+    throw new GradleException("Cannot build the native solver for the host platform '${hostId}'. Install a Rust toolchain " +
+            "(the host target is built with plain cargo).")
+}
+if (!skipped.isEmpty()) {
+    def message = "Native solver for ${skipped} will not be built (install zig and cargo-zigbuild to build every platform)."
+    if (requireAll)
+        throw new GradleException(message)
+    logger.warn(message)
+}
+
+tasks.register('buildNatives') {
+    group = 'build'
+    description = 'Builds the native solver for every platform which can be built on this machine'
+    dependsOn buildable.collect { "build_${it}".toString() }
+    outputs.dir(nativesDir)
+}
+
+tasks.register('buildHostNative') {
+    group = 'build'
+    description = 'Builds the native solver for the platform running the build (used by the unit tests)'
+    dependsOn "build_${hostId}".toString()
+}

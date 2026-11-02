@@ -30,6 +30,7 @@ import net.minecraft.world.entity.Entity;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.patryk3211.powergrid.electricity.GlobalElectricNetworks;
+import org.patryk3211.powergrid.electricity.GridChunkAnchors;
 import org.patryk3211.powergrid.electricity.sim.AbstractElectricWire;
 import org.patryk3211.powergrid.electricity.sim.ElectricalNetwork;
 import org.patryk3211.powergrid.electricity.sim.SwitchedWire;
@@ -59,6 +60,9 @@ public class ElectricBehaviour extends BlockEntityBehaviour implements ISynchron
     private byte rebuildOnClient = 0;
     private boolean removed = false;
     private boolean paused = true;
+    private boolean networkInitialized = false;
+    // True while a persistent device is simulated by the world networks because its chunk doesn't tick.
+    private boolean persistentRegistered = false;
     private boolean reducedSync = false;
     public int inhibitSyncCount = 0;
 
@@ -161,9 +165,19 @@ public class ElectricBehaviour extends BlockEntityBehaviour implements ISynchron
     }
 
     public void pause() {
+        pause(false);
+    }
+
+    // Persistent simulations stay in the network while the block entity is merely not ticking,
+    // but they must be torn down once the block entity itself goes away, otherwise a stale
+    // copy of the circuit keeps simulating next to the one built by the reloaded block entity.
+    private void pause(boolean teardown) {
         if(usesPersistentSimulation()) {
-            GlobalElectricNetworks.registerPersistentSimulation(this);
-            return;
+            if(!teardown) {
+                registerPersistent();
+                return;
+            }
+            unregisterPersistent();
         }
         if(!paused) {
             paused = true;
@@ -227,9 +241,20 @@ public class ElectricBehaviour extends BlockEntityBehaviour implements ISynchron
         }
     }
 
+    private void registerPersistent() {
+        persistentRegistered = true;
+        GlobalElectricNetworks.registerPersistentSimulation(this);
+    }
+
+    private void unregisterPersistent() {
+        if(!persistentRegistered)
+            return;
+        persistentRegistered = false;
+        GlobalElectricNetworks.unregisterPersistentSimulation(this);
+    }
+
     public void unpause() {
-        if(usesPersistentSimulation())
-            GlobalElectricNetworks.unregisterPersistentSimulation(this);
+        unregisterPersistent();
         if(paused) {
             paused = false;
             // External nodes weren't removed so they don't have to be added.
@@ -244,7 +269,7 @@ public class ElectricBehaviour extends BlockEntityBehaviour implements ISynchron
     @Override
     public void unload() {
         if(!removed) {
-            pause();
+            pause(true);
             // Unload doesn't remove external nodes since they might be utilized by transmission lines.
             // Wires are not dropped either since they could be forming an important transmission line junction.
             GlobalElectricNetworks.nodeHolderUnloaded(this);
@@ -252,17 +277,12 @@ public class ElectricBehaviour extends BlockEntityBehaviour implements ISynchron
     }
 
     public void remove() {
-        GlobalElectricNetworks.unregisterPersistentSimulation(this);
         breakConnections();
-        if(usesPersistentSimulation()) {
-            internalWires.forEach(AbstractElectricWire::remove);
-            for(int i = internalNodes.size() - 1; i >= 0; --i)
-                internalNodes.get(i).remove();
-        } else {
-            pause();
-        }
+        pause(true);
         GlobalElectricNetworks.nodeHolderRemoved(this);
         removed = true;
+        if(usesPersistentSimulation())
+            GridChunkAnchors.refresh(getWorld(), getPos(), blockEntity);
     }
 
     public void simulationTick() {
@@ -282,8 +302,37 @@ public class ElectricBehaviour extends BlockEntityBehaviour implements ISynchron
     @Override
     public void initialize() {
         super.initialize();
+        initializeNetwork();
+    }
+
+    private void initializeNetwork() {
+        if(networkInitialized)
+            return;
+        networkInitialized = true;
         GlobalElectricNetworks.nodeHolderAdded(this);
         unpause();
+        if(usesPersistentSimulation())
+            GridChunkAnchors.refresh(getWorld(), getPos(), null);
+    }
+
+    /**
+     * Joins the network of a persistent device whose chunk is loaded but doesn't tick, regular ticking
+     * would never initialize it. The device is simulated by the world networks until its chunk ticks.
+     */
+    public void initializeWithoutTicking() {
+        if(removed || !usesPersistentSimulation())
+            return;
+        initializeNetwork();
+        if(!persistentRegistered)
+            registerPersistent();
+    }
+
+    @Override
+    public void tick() {
+        super.tick();
+        // The block entity ticks by itself again, the world networks must not simulate it as well.
+        if(persistentRegistered)
+            unregisterPersistent();
     }
 
     public void addConnection(BlockWireEndpoint endpoint, BaseWireEntity wire) {
@@ -417,6 +466,10 @@ public class ElectricBehaviour extends BlockEntityBehaviour implements ISynchron
 
     public static void handleTicketChange(int newLevel, @NotNull ChunkHolder holder, int oldLevel) {
         var chunk = holder.getTickingChunk();
+        if(chunk == null) {
+            var full = holder.getFullChunkFuture().getNow(null);
+            chunk = full == null ? null : full.orElse(null);
+        }
         if(chunk == null)
             return;
         if(!ChunkLevel.isBlockTicking(newLevel) && ChunkLevel.isBlockTicking(oldLevel)) {

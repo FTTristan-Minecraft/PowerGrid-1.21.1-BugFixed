@@ -46,6 +46,7 @@ import net.neoforged.fml.event.lifecycle.InterModEnqueueEvent;
 import net.neoforged.neoforge.capabilities.Capabilities;
 import net.neoforged.neoforge.capabilities.RegisterCapabilitiesEvent;
 import net.neoforged.neoforge.common.NeoForge;
+import net.neoforged.neoforge.common.world.chunk.RegisterTicketControllersEvent;
 import net.neoforged.neoforge.data.event.GatherDataEvent;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 import net.neoforged.neoforge.network.registration.PayloadRegistrar;
@@ -140,6 +141,11 @@ public class PowerGridImpl {
 
         // Client init
         EnvExecutor.runInEnv(Env.CLIENT, () -> PowerGridClientImpl::init);
+    }
+
+    @SubscribeEvent
+    public static void registerTicketControllers(RegisterTicketControllersEvent event) {
+        event.register(org.patryk3211.powergrid.electricity.GridChunkAnchors.CONTROLLER);
     }
 
     @SubscribeEvent

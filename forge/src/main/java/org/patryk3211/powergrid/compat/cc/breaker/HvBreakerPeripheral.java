@@ -1,5 +1,6 @@
 package org.patryk3211.powergrid.compat.cc.breaker;
 
+import dan200.computercraft.api.lua.LuaException;
 import dan200.computercraft.api.lua.LuaFunction;
 import dan200.computercraft.api.peripheral.IPeripheral;
 import org.jetbrains.annotations.NotNull;
@@ -39,23 +40,26 @@ public class HvBreakerPeripheral implements IPeripheral {
     }
 
     @LuaFunction(mainThread = true)
-    public void setTripCurrent(int current) {
+    public void setTripCurrent(int current) throws LuaException {
+        if (current < 0) {
+            throw new LuaException("Trip current must not be negative");
+        }
         breaker.setTripCurrent(current);
     }
 
     @LuaFunction(mainThread = true)
-    public void open() {
-        breaker.setClosed(false);
+    public boolean open() {
+        return breaker.setClosed(false);
     }
 
     @LuaFunction(mainThread = true)
-    public void close() {
-        breaker.setClosed(true);
+    public boolean close() {
+        return breaker.setClosed(true);
     }
 
     @LuaFunction(mainThread = true)
-    public void toggle() {
-        breaker.toggle();
+    public boolean toggle() {
+        return breaker.toggle();
     }
 
     @Override

@@ -84,6 +84,8 @@ public class CElectricity extends ConfigBase {
     public final ConfigFloat hvSwitchSparkMinimumCurrent = f(0.1f, 0, "hvSwitchSparkMinimumCurrent", Comments.hvSwitchSparkMinimumCurrent);
     public final ConfigFloat hvSwitchSparkPotentialFactor = f(1000, 0, "hvSwitchSparkPotentialFactor", Comments.hvSwitchSparkPotentialFactor);
 
+    public final ConfigBool keepTransmissionChunksLoaded = b(true, "keepTransmissionChunksLoaded", Comments.keepTransmissionChunksLoaded);
+
     public final CSolver solver = nested(1, CSolver::new, Comments.solver);
     public final CResistance resistance = nested(1, CResistance::new, Comments.resistance);
     public final CThermal thermal = nested(1, CThermal::new, Comments.thermal);
@@ -94,6 +96,7 @@ public class CElectricity extends ConfigBase {
     }
 
     private static class Comments {
+        public static final String keepTransmissionChunksLoaded = "Keeps chunks containing generators, transformers, breakers, switches and fuse holders loaded (without ticking them) so that the grid they belong to keeps working when no player is nearby, and across server restarts. Consumers in those chunks stay paused and put no load on the grid.";
         public static final String solver = "Things related to how the simulation is handled (probably shouldn't be altered unless you know what you are doing)";
         public static final String resistance = "Resistance values for all devices";
         public static final String thermal = "Thermal properties for all devices";

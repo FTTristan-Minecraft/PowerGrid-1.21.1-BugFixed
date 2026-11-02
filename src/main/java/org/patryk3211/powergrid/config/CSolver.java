@@ -47,6 +47,7 @@ public class CSolver extends ConfigBase {
 
     public final ConfigBool seriesWireOptimization = b(false, "seriesWireOptimization");
 
+    public final ConfigInt maxSimulationMillisPerTick = i(35, 0, 50, "maxSimulationMillisPerTick", Comments.maxSimulationMillisPerTick);
     public final ConfigInt multiTicks = i(1, 1, "multiTicks", Comments.multiTicks);
 
     public final ConfigEnum<SolverBackend> solverBackend = e(SolverBackend.NATIVE, "solverBackend", Comments.solverBackend);
@@ -89,12 +90,13 @@ public class CSolver extends ConfigBase {
 
         public static final String solverSimpleMaxIterations = "Maximum solver iterations for networks without dynamic residuals";
         public static final String solverComplexMaxIterations = "Maximum solver iterations for networks with dynamic residuals";
+        public static final String maxSimulationMillisPerTick = "Time budget (in milliseconds) the electrical simulation of one dimension may use per server tick. When it is exceeded the remaining networks are solved on the following ticks instead, so a huge or misbehaving grid slows the simulation down instead of freezing the whole server. 0 disables the limit.";
         public static final String multiTicks = "Experimental! This option enables all electrical networks to tick multiple times per world tick. This allows for better simulation precision when reactive components are involved but can have a significant impact on performance.";
 
         public static final String bjtLimAlpha = "BJT inter-iteration voltage change smoothing multiplier";
         public static final String diodeLimAlpha = "Diode inter-iteration voltage change smoothing multiplier";
         public static final String triodeLim = "Triode inter-iteration voltage change smoothing multiplier";
 
-        public static final String solverBackend = "Native MNA backend. Native acceleration is required; the mod will not start if the matching native binary is unavailable.";
+        public static final String solverBackend = "Solver MNA backend. The native backend (Rust) provides platform-specific acceleration which usually improves performance, however it needs a binary which might not be available for all platforms. Java backend is portable and always available as fallback.";
     }
 }

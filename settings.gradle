@@ -11,7 +11,7 @@ pluginManagement {
 
 rootProject.name = "Power Grid"
 
-include("native")
+include("native-rust")
 //include("fabric")
 include("forge")
 //includeBuild("thirdparty/tfmg") {

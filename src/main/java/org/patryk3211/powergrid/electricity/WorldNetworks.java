@@ -15,6 +15,7 @@
  */
 package org.patryk3211.powergrid.electricity;
 
+import org.patryk3211.powergrid.utility.RateLimitedLog;
 import io.netty.util.collection.IntObjectHashMap;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
@@ -253,8 +254,10 @@ public class WorldNetworks extends SavedData implements NetworkGraph.IGraphModif
         });
         JunctionWireEndpoint.processNewNodes(world);
 
-        for(var behaviour : List.copyOf(persistentSimulations))
-            behaviour.simulationTick();
+        if(!persistentSimulations.isEmpty()) {
+            for(var behaviour : List.copyOf(persistentSimulations))
+                behaviour.simulationTick();
+        }
 
         runningDiscovery = true;
         for(var network : islandDiscoveryQueue) {
@@ -280,7 +283,8 @@ public class WorldNetworks extends SavedData implements NetworkGraph.IGraphModif
         var hasPlayers = world instanceof ServerLevel serverLevel && !serverLevel.players().isEmpty();
         if(hasPlayers) {
             idleTicks = 0;
-        } else if(++idleTicks % 200 == 0) {
+        } else if(++idleTicks % 200 == 0 && persistentSimulations.isEmpty()) {
+            // Never reset a grid which is kept running without players (persistent devices).
             for(var network : subnetworks) {
                 network.resetStateForIdle();
             }
@@ -298,13 +302,34 @@ public class WorldNetworks extends SavedData implements NetworkGraph.IGraphModif
             }
             network.prepare(multiTick);
         }
+        solveNetworks(multiTick, System.nanoTime());
+        perf.end();
+    }
+
+    // Index of the network which is solved first, networks skipped because of the time budget go first next tick.
+    private int solveCursor = 0;
+
+    private void solveNetworks(int multiTick, long tickStart) {
+        long budget = ModdedConfigs.server().electricity.solver.maxSimulationMillisPerTick.get() * 1_000_000L;
+        int count = subnetworks.size();
+        if(count == 0)
+            return;
+        if(solveCursor >= count)
+            solveCursor = 0;
         for(int i = 0; i < multiTick; ++i) {
             // I guess this could go on a thread-pool
-            for(var network : subnetworks) {
-                network.singleTick();
+            for(int n = 0; n < count; ++n) {
+                if(budget > 0 && n > 0 && System.nanoTime() - tickStart > budget) {
+                    RateLimitedLog.warn(PowerGrid.LOGGER, "simulation-budget",
+                            "Electrical simulation is over its time budget ({} ms), {} of {} networks are solved next tick instead",
+                            budget / 1_000_000L, count - n, count);
+                    solveCursor = (solveCursor + n) % count;
+                    return;
+                }
+                subnetworks.get((solveCursor + n) % count).singleTick();
             }
         }
-        perf.end();
+        solveCursor = 0;
     }
 
     public void postTick() {
@@ -435,7 +460,7 @@ public class WorldNetworks extends SavedData implements NetworkGraph.IGraphModif
         var cSolver = ModdedConfigs.server().electricity.solver;
         var backend = cSolver.solverBackend.get();
         if(!backend.isSupported())
-            throw new IllegalStateException("The required Power Grid native solver is unavailable for this platform");
+            backend = CSolver.SolverBackend.JAVA;
         var network = new GraphedElectricalNetwork(globalGraph, true, backend::create);
         network.maxIterations = hooks -> hooks
                 ? cSolver.solverComplexMaxIterations.get()

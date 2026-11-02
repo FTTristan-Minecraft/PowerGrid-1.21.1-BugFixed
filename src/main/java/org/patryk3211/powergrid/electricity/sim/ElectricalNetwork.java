@@ -15,6 +15,7 @@
  */
 package org.patryk3211.powergrid.electricity.sim;
 
+import org.patryk3211.powergrid.utility.RateLimitedLog;
 import it.unimi.dsi.fastutil.objects.Reference2ReferenceOpenHashMap;
 import it.unimi.dsi.fastutil.objects.ReferenceArrayList;
 import it.unimi.dsi.fastutil.objects.ReferenceOpenHashSet;
@@ -233,20 +234,31 @@ public class ElectricalNetwork implements IStamped {
             // This node is not actually in this network.
             return;
 
+        detachNode(node, node.getIndex());
+        warmUp(3);
+        node.setNetwork(null);
+        setDirty();
+    }
+
+    /**
+     * Removes the node at the given position of the node list together with everything registered for it.
+     * Doesn't touch the node's own network reference.
+     */
+    private void detachNode(INode node, int index) {
         if(mna != null) {
             var StateVector = mna.stateVector();
-            for (int i = node.getIndex() + 1; i < nodes.size(); ++i) {
+            for (int i = index + 1; i < nodes.size(); ++i) {
                 // Move back all nodes by one.
                 nodes.get(i).assignIndex(i - 1);
                 StateVector.safe_set(i - 1, 0, StateVector.safe_get(i, 0));
             }
         } else {
-            for (int i = node.getIndex() + 1; i < nodes.size(); ++i) {
+            for (int i = index + 1; i < nodes.size(); ++i) {
                 // Move back all nodes by one.
                 nodes.get(i).assignIndex(i - 1);
             }
         }
-        nodes.remove(node.getIndex());
+        nodes.remove(index);
 
         if(node instanceof ICouplingNode)
             couplings.remove(node);
@@ -263,9 +275,37 @@ public class ElectricalNetwork implements IStamped {
         }
         if(node instanceof IStaticResidual residual)
             residuals.remove(residual);
+    }
 
-        warmUp(3);
-        node.setNetwork(null);
+    /**
+     * Drops nodes which are listed here but belong to another network (or to none). Such leftovers happen when a
+     * node object is replaced or moved while this network still lists it. They must never be simulated, and keeping
+     * them around would make every tick report the same problem again.
+     */
+    private void evictForeignNodes() {
+        List<INode> foreign = null;
+        for(var node : nodes) {
+            if(node.getNetwork() != this) {
+                if(foreign == null)
+                    foreign = new ArrayList<>();
+                foreign.add(node);
+            }
+        }
+        if(foreign == null)
+            return;
+        RateLimitedLog.warn(LOGGER, "node-possession", "Dropping {} nodes which do not belong to their network, first: {}", foreign.size(), foreign.get(0));
+        for(var node : foreign) {
+            int index = -1;
+            for(int i = 0; i < nodes.size(); ++i) {
+                if(nodes.get(i) == node) {
+                    index = i;
+                    break;
+                }
+            }
+            if(index != -1)
+                detachNode(node, index);
+        }
+        // Wires which used the dropped nodes are removed when the matrix is rebuilt, since their nodes aren't part of this network.
         setDirty();
     }
 
@@ -292,8 +332,7 @@ public class ElectricalNetwork implements IStamped {
             if(LOGGER == null) {
                 throw new IllegalArgumentException("Both nodes of a wire must be part of the network (node1 " + wire.node1 + " isn't - " + suffix + ")");
             } else {
-                LOGGER.error("Both nodes of a wire must be part of the network (node1 {} isn't - {})", wire.node1, suffix);
-                LOGGER.error("Stack trace", new Throwable());
+                RateLimitedLog.error(LOGGER, "wire-node1", "Both nodes of a wire must be part of the network (node1 {} isn't - {})", wire.node1, suffix);
             }
         }
         if(wire.node2 != null && !hasNode(wire.node2) && !leafNodes.containsKey(wire.node2)) {
@@ -302,8 +341,7 @@ public class ElectricalNetwork implements IStamped {
             if(LOGGER == null) {
                 throw new IllegalArgumentException("Both nodes of a wire must be part of the network (node2 " + wire.node2 + " isn't - " + suffix + ")");
             } else {
-                LOGGER.error("Both nodes of a wire must be part of the network (node2 {} isn't - {})", wire.node2, suffix);
-                LOGGER.error("Stack trace", new Throwable());
+                RateLimitedLog.error(LOGGER, "wire-node2", "Both nodes of a wire must be part of the network (node2 {} isn't - {})", wire.node2, suffix);
             }
         }
         if(!wires.add(wire))
@@ -347,10 +385,11 @@ public class ElectricalNetwork implements IStamped {
             return;
         if(leafNodes.containsKey(wire.node1) || leafNodes.containsKey(wire.node2))
             return;
-        if(!hasNode(wire.node1) || !hasNode(wire.node2))
+        // Wires connected to ground have a null node which doesn't take part in the matrix.
+        if((wire.node1 != null && !hasNode(wire.node1)) || (wire.node2 != null && !hasNode(wire.node2)))
             return;
-        if(wire.node1.getIndex() == -1 || wire.node2.getIndex() == -1) {
-            PowerGrid.LOGGER.error("Node index negative even though it shouldn't be?", new Throwable());
+        if((wire.node1 != null && wire.node1.getIndex() == -1) || (wire.node2 != null && wire.node2.getIndex() == -1)) {
+            RateLimitedLog.error(PowerGrid.LOGGER, "negative-index", "Node index negative even though it shouldn't be?");
             return;
         }
 
@@ -435,15 +474,12 @@ public class ElectricalNetwork implements IStamped {
                 if(node != null) {
                     if(hasNode(node)) {
                         if(node.getIndex() >= nodes.size()) {
-                            if(LOGGER != null)
-                                LOGGER.warn("Node {} has an index outside of the allocated matrix size, skipping", node);
+                            RateLimitedLog.warn(LOGGER, "node-index", "Node {} has an index outside of the allocated matrix size, skipping", node);
                             skip = true;
                             break;
                         }
                     } else if(!leafNodes.containsKey(node)) {
-                        if(LOGGER != null) {
-                            LOGGER.warn("Dropped a stale wire (wire nodes not part of this network) between {}.", wire.coupledNodes());
-                        }
+                        RateLimitedLog.warn(LOGGER, "stale-wire", "Dropped a stale wire (wire nodes not part of this network) between {}.", wire.coupledNodes());
                         staleWires.add(wire);
                         skip = true;
                         break;
@@ -473,7 +509,7 @@ public class ElectricalNetwork implements IStamped {
                 // probably shouldn't target eliminated nodes.
                 node.couple(mna::jacobianAdd);
             } catch(IllegalArgumentException | NullPointerException e) {
-                LOGGER.error("Failed to couple {}:", node, e);
+                RateLimitedLog.error(LOGGER, "couple", "Failed to couple {}: {}", node, e.toString());
             }
         }
 
@@ -523,8 +559,8 @@ public class ElectricalNetwork implements IStamped {
             if((wire.node1 == null || hasNode(wire.node1) || leafNodes.containsKey(wire.node1)) &&
                     (wire.node2 == null || hasNode(wire.node2) || leafNodes.containsKey(wire.node2))) {
                 addWire(wire);
-            } else if(LOGGER != null) {
-                LOGGER.warn("Dropped stale wire {} between {} and {}", wire, wire.node1, wire.node2);
+            } else {
+                RateLimitedLog.warn(LOGGER, "merge-stale-wire", "Dropped stale wire {} between {} and {}", wire, wire.node1, wire.node2);
             }
         });
         // Make the other network empty.
@@ -770,12 +806,7 @@ public class ElectricalNetwork implements IStamped {
             return;
         }
 
-        // Verify possession of nodes
-        for(var node : nodes) {
-            if(node.getNetwork() != this) {
-                PowerGrid.LOGGER.warn("INVALID NODE POSSESSION {}", node);
-            }
-        }
+        evictForeignNodes();
 
         prepareMatrices(multiTicks);
     }

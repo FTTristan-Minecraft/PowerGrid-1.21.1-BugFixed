@@ -15,6 +15,7 @@
  */
 package org.patryk3211.powergrid.electricity.sim.solver;
 
+import org.patryk3211.powergrid.utility.RateLimitedLog;
 import org.ejml.data.DMatrixRMaj;
 import org.ejml.dense.row.CommonOps_DDRM;
 import org.ejml.dense.row.MatrixFeatures_DDRM;
@@ -247,7 +248,7 @@ public class JavaMNA implements IMNA {
             enableRowExchange = false;
             if (LOGGER != null) {
                 if (ModdedConfigs.logsEnabled()) {
-                    LOGGER.warn("Solution possibly not converged after {} Newton iterations, final norm: {}", i, norm);
+                    RateLimitedLog.warn(LOGGER, "java-mna-convergence", "Solution possibly not converged after {} Newton iterations, final norm: {}", i, norm);
                 }
             } else {
                 System.out.printf("Solution possibly not converged after %d Newton iterations, final norm: %g\n", i, norm);

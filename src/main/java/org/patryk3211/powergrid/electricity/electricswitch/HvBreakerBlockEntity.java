@@ -91,9 +91,16 @@ public class HvBreakerBlockEntity extends ElectricKineticBlockEntity {
         redstoneState = level.getBestNeighborSignal(worldPosition) > 0;
     }
 
-    public void setClosed(boolean closed) {
+    /**
+     * Opens or closes the breaker, closing requires the breaker to be charged just like a redstone trigger does.
+     * @return true if the breaker is in the requested state afterwards.
+     */
+    public boolean setClosed(boolean closed) {
         if (state == closed) {
-            return;
+            return true;
+        }
+        if (level == null || level.isClientSide || (closed && !isCharged())) {
+            return false;
         }
         state = closed;
         if(wire != null) {
@@ -105,10 +112,11 @@ public class HvBreakerBlockEntity extends ElectricKineticBlockEntity {
         (state ? ModdedSoundEvents.BREAKER_ON : ModdedSoundEvents.BREAKER_OFF)
                 .playOnServer(level, worldPosition);
         notifyUpdate();
+        return true;
     }
 
-    public void toggle() {
-        setClosed(!state);
+    public boolean toggle() {
+        return setClosed(!state);
     }
 
     public boolean isClosed() {

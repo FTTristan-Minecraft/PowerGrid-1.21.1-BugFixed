@@ -25,6 +25,12 @@ import static org.patryk3211.powergrid.electricity.transformer.NetherTransformer
 import static org.patryk3211.powergrid.electricity.transformer.NetherTransformerBlock.PART;
 
 public class NetherTransformerBlockEntity extends ElectricBlockEntity {
+    // Transmits or supplies power without consuming any, so it stays in the grid while its chunk doesn't tick.
+    @Override
+    public boolean usePersistentSimulation() {
+        return true;
+    }
+
     private static final Map<UUID, TransformerEntry> TRANSFORMERS = new Object2ReferenceArrayMap<>();
 
     private UUID id;

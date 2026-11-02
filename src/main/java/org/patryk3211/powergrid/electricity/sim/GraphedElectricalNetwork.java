@@ -15,6 +15,7 @@
  */
 package org.patryk3211.powergrid.electricity.sim;
 
+import org.patryk3211.powergrid.utility.RateLimitedLog;
 import it.unimi.dsi.fastutil.objects.Object2DoubleArrayMap;
 import it.unimi.dsi.fastutil.objects.Object2DoubleMap;
 import it.unimi.dsi.fastutil.objects.Reference2ReferenceOpenHashMap;
@@ -102,11 +103,7 @@ public class GraphedElectricalNetwork extends ElectricalNetwork {
             deferredNodeCheck.remove(enode);
             var connections = graph.getConnectedLines(enode);
             if(!connections.isEmpty()) {
-                PowerGrid.LOGGER.warn("Removed a node which had connections");
-                for(var conn : connections) {
-                    PowerGrid.LOGGER.warn(" - {}", conn);
-                }
-                PowerGrid.LOGGER.warn("Stack trace: ", new Throwable());
+                RateLimitedLog.warn(PowerGrid.LOGGER, "graphed-node-connections", "Removed a node which had connections: {}", connections);
             }
             graph.removeNode(enode);
         }
@@ -456,7 +453,9 @@ public class GraphedElectricalNetwork extends ElectricalNetwork {
     @Override
     public void prepare(int multiTicks) {
         preparing = true;
-        if(ModdedConfigs.server().electricity.solver.seriesWireOptimization.get()) {
+        // The server config doesn't exist outside of a running game (unit tests), the optimization is off then.
+        var serverConfig = ModdedConfigs.server();
+        if(serverConfig != null && serverConfig.electricity.solver.seriesWireOptimization.get()) {
             var cleanNodes = new HashSet<IElectricNode>();
             var changed = true;
             while(changed) {

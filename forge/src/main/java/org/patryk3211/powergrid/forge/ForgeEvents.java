@@ -21,7 +21,9 @@ import net.neoforged.neoforge.event.entity.EntityLeaveLevelEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
 import net.neoforged.neoforge.event.level.ChunkEvent;
 import net.neoforged.neoforge.event.level.ChunkTicketLevelUpdatedEvent;
+import net.minecraft.world.level.chunk.LevelChunk;
 import org.patryk3211.powergrid.electricity.GlobalElectricNetworks;
+import org.patryk3211.powergrid.electricity.GridChunkAnchors;
 import org.patryk3211.powergrid.electricity.base.ElectricBehaviour;
 import org.patryk3211.powergrid.electricity.wire.BaseWireEntity;
 import org.patryk3211.powergrid.equipment.drill.DrillItem;
@@ -52,6 +54,8 @@ public class ForgeEvents {
         if(global == null)
             return;
         global.chunkLoaded(event.getChunk().getPos());
+        if(level instanceof ServerLevel serverLevel && event.getChunk() instanceof LevelChunk chunk)
+            GridChunkAnchors.chunkLoaded(serverLevel, chunk);
     }
 
     @SubscribeEvent

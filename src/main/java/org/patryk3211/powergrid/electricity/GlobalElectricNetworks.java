@@ -193,13 +193,19 @@ public class GlobalElectricNetworks {
     }
 
     public static void registerPersistentSimulation(ElectricBehaviour behaviour) {
-        var worldNetworks = getWorldNetworks(behaviour.blockEntity.getLevel());
+        var level = behaviour.blockEntity.getLevel();
+        if(level == null || level.isClientSide)
+            return;
+        var worldNetworks = getWorldNetworks(level);
         if(worldNetworks != null)
             worldNetworks.registerPersistentSimulation(behaviour);
     }
 
     public static void unregisterPersistentSimulation(ElectricBehaviour behaviour) {
-        var worldNetworks = getWorldNetworks(behaviour.blockEntity.getLevel());
+        var level = behaviour.blockEntity.getLevel();
+        if(level == null || level.isClientSide)
+            return;
+        var worldNetworks = getWorldNetworks(level);
         if(worldNetworks != null)
             worldNetworks.unregisterPersistentSimulation(behaviour);
     }
@@ -218,8 +224,11 @@ public class GlobalElectricNetworks {
         var rR = cSolver.solverRelativePrecision.get();
         var rM = cSolver.solverAbsoluteMinimumPrecision.get();
         var sA = cSolver.solverMaxSearchAlpha.get();
-        if(!backend.isSupported())
-            throw new IllegalStateException("The required Power Grid native solver is unavailable for this platform");
+        if(!backend.isSupported()) {
+            PowerGrid.LOGGER.error("Selected backend '{}' is not supported! Using Java backend instead", backend);
+            backend = CSolver.SolverBackend.JAVA;
+            cSolver.solverBackend.set(CSolver.SolverBackend.JAVA);
+        }
         final var selectedBackend = backend;
         for(var networks : worldNetworks.values()) {
             networks.subnetworks.forEach(network -> {

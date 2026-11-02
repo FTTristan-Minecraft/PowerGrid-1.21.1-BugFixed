@@ -11,20 +11,54 @@ jobs:
       contents: read
 
     steps:
+    # The old C solver (and its OpenBLAS/SuperLU submodules) isn't part of the build any more.
     - uses: actions/checkout@v4
-      with:
-        submodules: recursive
     - name: Set up JDK 21
       uses: actions/setup-java@v4
       with:
         java-version: '21'
         distribution: 'temurin'
 
+    # The native solver is written in Rust and is cross compiled for every platform Minecraft runs on
+    # (Linux/Windows/macOS on x86_64 and arm64, plus 32 bit ARM and RISC-V Linux), zig is used as the linker.
+    - name: Install Rust toolchain and targets
+      run: |
+        rustup toolchain install stable --profile minimal
+        rustup default stable
+        rustup target add \
+          x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu armv7-unknown-linux-gnueabihf riscv64gc-unknown-linux-gnu \
+          x86_64-pc-windows-gnu aarch64-pc-windows-gnullvm \
+          x86_64-apple-darwin aarch64-apple-darwin
+
+    - name: Cache cargo-zigbuild
+      id: cache-zigbuild
+      uses: actions/cache@v4
+      with:
+        path: ~/.cargo/bin/cargo-zigbuild
+        key: cargo-zigbuild-0.24.0
+
+    - name: Install cargo-zigbuild
+      if: steps.cache-zigbuild.outputs.cache-hit != 'true'
+      run: cargo install --locked cargo-zigbuild --version 0.24.0
+
+    - name: Install zig
+      run: |
+        curl -sSfL -o zig.tar.xz https://ziglang.org/download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz
+        echo "02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239  zig.tar.xz" | sha256sum -c -
+        mkdir -p "$HOME/zig" && tar -xf zig.tar.xz -C "$HOME/zig" --strip-components=1
+        echo "$HOME/zig" >> "$GITHUB_PATH"
+
+    - name: Verify toolchain
+      run: |
+        rustc --version
+        cargo zigbuild --help > /dev/null
+        zig version
+
     - name: Build Forge
       uses: burrunan/gradle-cache-action@v3
       with:
         job-id: jdk21
-        arguments: :forge:build
+        arguments: :forge:build -PrequireAllNatives=true
     - name: Upload Forge Artifacts
       uses: actions/upload-artifact@v4
       with:
@@ -38,7 +72,7 @@ jobs:
       env:
         DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
       run: |
-        if [ $DISCORD_WEBHOOK ]; then
+        if [ -n "$DISCORD_WEBHOOK" ]; then
           curl -H "Content-Type: application/json" \
              -X POST \
              --data-binary '{
@@ -51,7 +85,7 @@ jobs:
                   "color": 565479
                 }
              ]}' \
-             $DISCORD_WEBHOOK
+             "$DISCORD_WEBHOOK"
         else
           echo "URL secret missing, no announcement sent."
         fi

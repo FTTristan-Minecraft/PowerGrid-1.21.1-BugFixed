@@ -71,7 +71,8 @@ public class GeneratorCoupling extends VoltageSourceCoupling implements IOuterHo
 
     @Override
     public void preSolve() {
-        setField(fieldStrength.get());
+        if(fieldStrength != null)
+            setField(fieldStrength.get());
         setVoltage(field * rotor.getAngularVelocityRadians());
     }
 

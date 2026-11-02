@@ -34,6 +34,12 @@ import org.patryk3211.powergrid.utility.Lang;
 import java.util.List;
 
 public class SwitchBlockEntity extends ElectricBlockEntity implements IHaveGoggleInformation {
+    // Transmits or supplies power without consuming any, so it stays in the grid while its chunk doesn't tick.
+    @Override
+    public boolean usePersistentSimulation() {
+        return true;
+    }
+
     private SwitchedWire wire;
     private float maxVoltage;
     private boolean switchState;

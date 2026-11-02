@@ -14,6 +14,9 @@ architectury {
 
 var logConfig = files('log4j2.xml')
 allprojects {
+	if(project.name == 'native-rust')
+		return
+
 	apply plugin: "java"
 	apply plugin: "architectury-plugin"
 	apply plugin: "dev.architectury.loom"
@@ -149,7 +152,7 @@ var changelogFile = file('build/changelog.md')
 changelogFile.parentFile.mkdir()
 changelogFile.createNewFile()
 subprojects {
-	if(project.name == 'native')
+	if(project.name == 'native' || project.name == 'native-rust')
 		return;
 	apply plugin: "com.github.johnrengelman.shadow"
 	apply plugin: "me.modmuss50.mod-publish-plugin"
@@ -209,7 +212,7 @@ subprojects {
 			version = "mc${project.minecraft_version}-${project.mod_version}-${hash}"
 	})
 
-	def projNative = project(':native')
+	def projNative = project(':native-rust')
 	tasks.jar {
 		inputs.property "archivesName", project.base.archivesName
 		duplicatesStrategy = DuplicatesStrategy.EXCLUDE
@@ -228,15 +231,14 @@ subprojects {
 	tasks.named("remapJar") {
 		inputFile.set shadowJar.archiveFile
 		dependsOn shadowJar
+		dependsOn ':native-rust:buildNatives'
 		injectAccessWidener = true
 		archiveClassifier = null
 		duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 
-		from({ -> projNative.tasks.buildLinux.outputs }) {
-			into('native/linux')
-		}
-		from({ -> projNative.tasks.buildWindows.outputs }) {
-			into('native/windows')
+		// native/<os>-<arch>/<library>, one folder for every platform which has been built
+		from(projNative.layout.buildDirectory.dir('natives')) {
+			into('native')
 		}
 	}
 
@@ -360,19 +362,19 @@ dependencies {
 
 
 def os = DefaultNativePlatform.currentOperatingSystem
-String libDir = null
-if(os.isWindows()) {
-	libDir = project(':native').layout.buildDirectory.dir("cmake/windows").get()
-	classes.dependsOn 'native:buildWindows'
-} else if(os.isLinux()) {
-	libDir = project(':native').layout.buildDirectory.dir("cmake/linux").get()
-	classes.dependsOn 'native:buildLinux'
-}
+def hostOs = os.isWindows() ? 'windows' : (os.isMacOsX() ? 'macos' : 'linux')
+def hostArch = System.getProperty('os.arch').toLowerCase()
+hostArch = ['amd64', 'x86_64', 'x64'].contains(hostArch) ? 'x86_64'
+		: (['aarch64', 'arm64'].contains(hostArch) ? 'aarch64'
+		: (['arm', 'armv7l', 'armv8l'].contains(hostArch) ? 'armv7' : hostArch))
+// Library of the platform running the build, the unit tests load it from the library path
+def libDir = project(':native-rust').layout.buildDirectory.dir("natives/${hostOs}-${hostArch}").get()
 
 ext.nativeLibDir = libDir
 
 test {
 	useJUnitPlatform()
+	dependsOn ":native-rust:build_${hostOs}-${hostArch}"
 	jvmArgs "-Djava.library.path=" + libDir
 }
 

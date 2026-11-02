@@ -15,6 +15,7 @@
  */
 package org.patryk3211.powergrid.electricity.sim;
 
+import org.patryk3211.powergrid.utility.RateLimitedLog;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.patryk3211.powergrid.PowerGrid;
@@ -72,7 +73,7 @@ public class NetworkGraph {
             other.connections.remove(object);
         }
         if(!object.couplings.isEmpty()) {
-            ElectricalNetwork.LOGGER.warn("Electric node removed before it was fully decoupled, this can cause issues");
+            RateLimitedLog.warn(ElectricalNetwork.LOGGER, "graph-decouple", "Electric node removed before it was fully decoupled, this can cause issues");
             for(var coupling : object.couplings) {
                 var network = coupling.getNetwork();
                 if(network != null)
@@ -309,7 +310,7 @@ public class NetworkGraph {
             } else if(line.getNode2() == node) {
                 connected.add(line.getNode1());
             } else {
-                PowerGrid.LOGGER.warn("Neither end of line {} is connected to node {}", line, node);
+                RateLimitedLog.warn(PowerGrid.LOGGER, "graph-line", "Neither end of line {} is connected to node {}", line, node);
             }
         }
         return connected;
