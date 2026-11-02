@@ -512,4 +512,14 @@ public class GraphedElectricalNetwork extends ElectricalNetwork {
         seriesWires.clear();
         deferredNodeCheck.clear();
     }
+
+    @Override
+    public int audit() {
+        int repairs = super.audit();
+        // Nodes which have left the network can't be checked for connectivity any more.
+        var before = deferredNodeCheck.size();
+        deferredNodeCheck.removeIf(node -> !hasNode(node) && !leafNodes.containsKey(node));
+        repairs += before - deferredNodeCheck.size();
+        return repairs;
+    }
 }

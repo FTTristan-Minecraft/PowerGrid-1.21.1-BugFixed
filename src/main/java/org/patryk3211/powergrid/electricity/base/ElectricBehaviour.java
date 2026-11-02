@@ -160,6 +160,13 @@ public class ElectricBehaviour extends BlockEntityBehaviour implements ISynchron
         return externalNodes;
     }
 
+    /**
+     * @return True once the block entity has been removed from the world for good.
+     */
+    public boolean isDestroyed() {
+        return removed;
+    }
+
     public boolean usesPersistentSimulation() {
         return element.usePersistentSimulation();
     }

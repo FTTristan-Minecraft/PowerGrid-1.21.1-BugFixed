@@ -47,6 +47,7 @@ public class CSolver extends ConfigBase {
 
     public final ConfigBool seriesWireOptimization = b(false, "seriesWireOptimization");
 
+    public final ConfigInt stateAuditIntervalTicks = i(100, 0, 72000, "stateAuditIntervalTicks", Comments.stateAuditIntervalTicks);
     public final ConfigInt maxSimulationMillisPerTick = i(35, 0, 50, "maxSimulationMillisPerTick", Comments.maxSimulationMillisPerTick);
     public final ConfigInt multiTicks = i(1, 1, "multiTicks", Comments.multiTicks);
 
@@ -90,6 +91,7 @@ public class CSolver extends ConfigBase {
 
         public static final String solverSimpleMaxIterations = "Maximum solver iterations for networks without dynamic residuals";
         public static final String solverComplexMaxIterations = "Maximum solver iterations for networks with dynamic residuals";
+        public static final String stateAuditIntervalTicks = "How often (in ticks) the electrical networks are checked for stale state (nodes and wires which belong to another network, removed devices still being simulated, wrong source counters, ...). Whatever is found is repaired and logged. 0 disables the check.";
         public static final String maxSimulationMillisPerTick = "Time budget (in milliseconds) the electrical simulation of one dimension may use per server tick. When it is exceeded the remaining networks are solved on the following ticks instead, so a huge or misbehaving grid slows the simulation down instead of freezing the whole server. 0 disables the limit.";
         public static final String multiTicks = "Experimental! This option enables all electrical networks to tick multiple times per world tick. This allows for better simulation precision when reactive components are involved but can have a significant impact on performance.";
 

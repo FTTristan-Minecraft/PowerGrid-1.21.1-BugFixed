@@ -15,6 +15,9 @@
  */
 package org.patryk3211.powergrid.electricity.base;
 
+import org.patryk3211.powergrid.utility.RateLimitedLog;
+import org.patryk3211.powergrid.electricity.GridDiagnostics;
+import org.patryk3211.powergrid.PowerGrid;
 import com.simibubi.create.content.kinetics.fan.AirCurrent;
 import com.simibubi.create.foundation.blockEntity.SmartBlockEntity;
 import com.simibubi.create.foundation.blockEntity.behaviour.BehaviourType;
@@ -81,6 +84,11 @@ public class ThermalBehaviour extends BlockEntityBehaviour implements ISynchroni
     private boolean firstTick = true;
 
     private IParticleGenerator particleGenerator = null;
+
+    // What heated the device last, only used to explain an overheat.
+    private double lastPower;
+    private AbstractElectricWire lastWire;
+    private boolean overheatLogged;
 
     protected ThermalBehaviour(SmartBlockEntity be, float thermalMass, float dissipationFactor, float overheatTemperature) {
         super(be);
@@ -285,10 +293,22 @@ public class ThermalBehaviour extends BlockEntityBehaviour implements ISynchroni
             var temperatureDelta = temperature - prevTemperature;
             prevTemperature = temperature;
 
+            if(!isOverheated())
+                overheatLogged = false;
             if(isOverheated()) {
+                if(!overheatLogged) {
+                    overheatLogged = true;
+                    RateLimitedLog.warn(PowerGrid.LOGGER, "overheat-" + pos.asLong(),
+                            "{} at {} ({}) is overheating: {}", GridDiagnostics.blockName(blockEntity.getBlockState().getBlock()),
+                            GridDiagnostics.position(pos), world.dimension().location(), describeHeat());
+                }
                 if(temperatureDelta > 0 && overheatTicks++ >= OVERHEAT_TICKS) {
                     // Overheated for 3 ticks and temperature keeps rising,
                     // no more excuses, this device is exploding.
+                    RateLimitedLog.warn(PowerGrid.LOGGER, "overheat-explode-" + pos.asLong(),
+                            "{} at {} ({}) is being DESTROYED by overheating ({}): {}", GridDiagnostics.blockName(blockEntity.getBlockState().getBlock()),
+                            GridDiagnostics.position(pos), world.dimension().location(),
+                            (behaviourFlags & OVERHEAT_EXPLOSION) != 0 && shouldExplode() ? "explosion" : "no explosion", describeHeat());
                     if (overheatCallback != null)
                         overheatCallback.run();
                     var award = blockEntity.getBehaviour(PGAdvancementBehaviour.TYPE);
@@ -343,11 +363,18 @@ public class ThermalBehaviour extends BlockEntityBehaviour implements ISynchroni
         }
     }
 
+    private String describeHeat() {
+        return String.format("temperature=%.1f C (limit %.1f C), heating power=%.2f W, sustainable power=%.2f W, %s",
+                temperature, overheatTemperature, lastPower, maxPower(),
+                lastWire != null ? GridDiagnostics.describe(lastWire) : "not heated by a wire");
+    }
+
     public boolean isOverheated() {
         return temperature >= overheatTemperature;
     }
 
     public void applyTickPower(double power) {
+        lastPower = power;
         if(Double.isFinite(power)) {
             var energy = power / 20f;
             temperature += (float) (energy / thermalMass);
@@ -365,6 +392,7 @@ public class ThermalBehaviour extends BlockEntityBehaviour implements ISynchroni
                 if(wire.getNode2() != null && network.isLeaf(wire.getNode2()))
                     return;
             }
+            lastWire = wire;
             applyTickPower(wire.power());
         }
     }

@@ -79,6 +79,20 @@ public class DebugCommand {
                     }
                     return Command.SINGLE_SUCCESS;
                 }))
+                .then(literal("audit").executes(ctx -> {
+                    var source = ctx.getSource();
+                    var global = GlobalElectricNetworks.getWorldNetworks((LevelAccessor) source.getLevel());
+                    if(global == null) {
+                        source.sendSystemMessage(Component.literal("Current level doesn't have any electrical networks"));
+                    } else {
+                        int repairs = global.audit();
+                        source.sendSystemMessage(Component.literal(repairs == 0
+                                ? "No stale state found in " + global.subnetworks.size() + " networks"
+                                : "Repaired " + repairs + " stale entries (details are in the server log)")
+                                .withStyle(repairs == 0 ? ChatFormatting.GREEN : ChatFormatting.GOLD));
+                    }
+                    return Command.SINGLE_SUCCESS;
+                }))
                 .then(literal("status").executes(ctx -> {
                     var source = ctx.getSource();
                     var player = source.getPlayerOrException();

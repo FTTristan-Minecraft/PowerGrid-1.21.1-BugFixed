@@ -69,6 +69,7 @@ public class WorldNetworks extends SavedData implements NetworkGraph.IGraphModif
     private boolean runningDiscovery = false;
     private int syncTicks = 0;
     private int idleTicks = 0;
+    private int auditTicks = 0;
 
     private CompoundTag nbt;
 
@@ -290,6 +291,12 @@ public class WorldNetworks extends SavedData implements NetworkGraph.IGraphModif
             }
         }
 
+        int auditInterval = ModdedConfigs.server().electricity.solver.stateAuditIntervalTicks.get();
+        if(auditInterval > 0 && ++auditTicks >= auditInterval) {
+            auditTicks = 0;
+            audit();
+        }
+
         perf.start();
         int multiTick = ModdedConfigs.server().electricity.solver.multiTicks.get();
         var iter = subnetworks.iterator();
@@ -304,6 +311,65 @@ public class WorldNetworks extends SavedData implements NetworkGraph.IGraphModif
         }
         solveNetworks(multiTick, System.nanoTime());
         perf.end();
+    }
+
+    /**
+     * Checks everything this level keeps about its networks and removes what is no longer true.
+     * Anything which is found is logged, since it points at a bug which created the stale state.
+     * @return Number of stale entries which were repaired.
+     */
+    public int audit() {
+        int repairs = 0;
+
+        var seen = new java.util.IdentityHashMap<ElectricalNetwork, Boolean>();
+        var networkIter = subnetworks.iterator();
+        while(networkIter.hasNext()) {
+            var network = networkIter.next();
+            if(seen.put(network, Boolean.TRUE) != null) {
+                networkIter.remove();
+                ++repairs;
+                RateLimitedLog.warn(PowerGrid.LOGGER, "audit-duplicate-network", "A network was registered twice, removed the duplicate");
+                continue;
+            }
+            repairs += network.audit();
+        }
+
+        // Devices which are simulated for their chunk but no longer exist.
+        var persistentIter = persistentSimulations.iterator();
+        while(persistentIter.hasNext()) {
+            var behaviour = persistentIter.next();
+            if(behaviour.isDestroyed() || behaviour.blockEntity.isRemoved() || behaviour.blockEntity.getLevel() != world
+                    || !behaviour.usesPersistentSimulation()) {
+                persistentIter.remove();
+                ++repairs;
+                RateLimitedLog.warn(PowerGrid.LOGGER, "audit-persistent", "Stopped simulating a removed device at {}", behaviour.getPos());
+            }
+        }
+
+        var partIter = partNodeMap.entrySet().iterator();
+        while(partIter.hasNext()) {
+            var entry = partIter.next();
+            if(entry.getKey() == null || entry.getValue() == null || entry.getValue().isEmpty()) {
+                partIter.remove();
+                ++repairs;
+            }
+        }
+
+        var trackerIter = trackers.entrySet().iterator();
+        while(trackerIter.hasNext()) {
+            var entry = trackerIter.next();
+            var before = entry.getValue().size();
+            entry.getValue().removeIf(player -> player.isRemoved() || player.level() != world);
+            repairs += before - entry.getValue().size();
+            if(entry.getValue().isEmpty())
+                trackerIter.remove();
+        }
+
+        syncStates.keySet().removeIf(player -> player.isRemoved() || player.level() != world);
+
+        if(repairs > 0)
+            setDirty();
+        return repairs;
     }
 
     // Index of the network which is solved first, networks skipped because of the time budget go first next tick.

@@ -34,7 +34,10 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.Nullable;
 import org.patryk3211.powergrid.collections.ModdedSoundEvents;
+import org.patryk3211.powergrid.PowerGrid;
 import org.patryk3211.powergrid.electricity.GlobalElectricNetworks;
+import org.patryk3211.powergrid.electricity.GridDiagnostics;
+import org.patryk3211.powergrid.utility.RateLimitedLog;
 import org.patryk3211.powergrid.electricity.base.ThermalBehaviour;
 import org.patryk3211.powergrid.electricity.sim.SwitchedWire;
 import org.patryk3211.powergrid.kinetics.base.ElectricKineticBlockEntity;
@@ -52,6 +55,9 @@ public class HvBreakerBlockEntity extends ElectricKineticBlockEntity {
     private boolean redstoneState;
     private int splitCooldown;
     private int overcurrentTicks;
+    private long lastOvercurrentTime = Long.MIN_VALUE;
+    // Highest current seen during the running overcurrent streak, reported when the breaker trips.
+    private double overcurrentPeak;
 
     public HvBreakerBlockEntity(BlockEntityType<?> typeIn, BlockPos pos, BlockState state) {
         super(typeIn, pos, state);
@@ -103,6 +109,7 @@ public class HvBreakerBlockEntity extends ElectricKineticBlockEntity {
             return false;
         }
         state = closed;
+        resetOvercurrent();
         if(wire != null) {
             wire.setState(state);
         } else {
@@ -149,29 +156,60 @@ public class HvBreakerBlockEntity extends ElectricKineticBlockEntity {
         return true;
     }
 
-    private void simulationProtectionTick() {
-        if(wire != null) {
-            if (state && setting.getValue() != 0 && !level.isClientSide && wire.isConverged()) {
-                if (Math.abs(wire.current()) > setting.getValue()) {
-                    ++overcurrentTicks;
-                    if(overcurrentTicks >= 5) {
-                        state = false;
-                        wire.setState(false);
-                        overcurrentTicks = 0;
-                        charge.setValueNoUpdate(0);
-                        ModdedSoundEvents.BREAKER_OFF.playOnServer(level, worldPosition);
-                        notifyUpdate();
-                    }
-                } else {
-                    overcurrentTicks = 0;
-                }
-            }
+    private void resetOvercurrent() {
+        overcurrentTicks = 0;
+        overcurrentPeak = 0;
+        lastOvercurrentTime = Long.MIN_VALUE;
+    }
+
+    private void simulationProtectionTick(String origin) {
+        if(level == null || level.isClientSide)
+            return;
+        if(wire == null || !state || setting.getValue() == 0) {
+            // Nothing to protect (or nothing to protect against), a streak must not survive that.
+            resetOvercurrent();
+            return;
+        }
+        if(!wire.isConverged())
+            return;
+
+        var now = level.getGameTime();
+        var current = Math.abs(wire.current());
+        var limit = setting.getValue();
+        if(current <= limit) {
+            resetOvercurrent();
+            return;
+        }
+        // Readings which are far apart are not one streak, this keeps old counts from tripping the breaker later.
+        if(now - lastOvercurrentTime > 20)
+            resetOvercurrent();
+        lastOvercurrentTime = now;
+        overcurrentPeak = Math.max(overcurrentPeak, current);
+        ++overcurrentTicks;
+
+        if(overcurrentTicks == 1) {
+            RateLimitedLog.warn(PowerGrid.LOGGER, "hv-breaker-overcurrent-" + worldPosition.asLong(),
+                    "HV breaker at {} ({}) sees {} A, above its trip current of {} A (checked by {}): {}",
+                    GridDiagnostics.position(worldPosition), level.dimension().location(),
+                    String.format("%.3f", current), limit, origin, GridDiagnostics.describe(wire));
+        }
+        if(overcurrentTicks >= 5) {
+            RateLimitedLog.warn(PowerGrid.LOGGER, "hv-breaker-trip-" + worldPosition.asLong(),
+                    "HV breaker at {} ({}) TRIPPED: current stayed above {} A for {} ticks, peak {} A (checked by {}): {}",
+                    GridDiagnostics.position(worldPosition), level.dimension().location(), limit, overcurrentTicks,
+                    String.format("%.3f", overcurrentPeak), origin, GridDiagnostics.describe(wire));
+            state = false;
+            wire.setState(false);
+            resetOvercurrent();
+            charge.setValueNoUpdate(0);
+            ModdedSoundEvents.BREAKER_OFF.playOnServer(level, worldPosition);
+            notifyUpdate();
         }
     }
 
     @Override
     public void simulationTick() {
-        simulationProtectionTick();
+        simulationProtectionTick("world network (chunk not ticking)");
     }
 
     @Override
@@ -198,8 +236,8 @@ public class HvBreakerBlockEntity extends ElectricKineticBlockEntity {
             wasCharged = true;
         }
 
+        simulationProtectionTick("block entity tick");
         if(wire != null) {
-            simulationProtectionTick();
             if (!state && splitCooldown++ >= 100) {
                 GlobalElectricNetworks.getWorldNetworks(level).scheduleIslandDiscovery(wire.getNetwork());
                 electricBehaviour.rebuildCircuit(false);

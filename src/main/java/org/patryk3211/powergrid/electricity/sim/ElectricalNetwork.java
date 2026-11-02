@@ -58,6 +58,8 @@ public class ElectricalNetwork implements IStamped {
 
     private int sourceCount;
     private int groundReferenceCount;
+    // Number of nodes the solver was allocated for, -1 if it hasn't been allocated.
+    private int allocatedNodeCount = -1;
 
     protected boolean dirty;
     private double conductanceDelta = 0;
@@ -309,6 +311,166 @@ public class ElectricalNetwork implements IStamped {
         setDirty();
     }
 
+    /**
+     * Removes a wire from this network together with everything registered for it, including the counters.
+     * Doesn't mark the network as dirty. The wire is released only if it still belongs to this network.
+     */
+    private void dropWire(AbstractElectricWire wire) {
+        if(!wires.remove(wire))
+            return;
+        if(wire.isSource())
+            --sourceCount;
+        if(wire.node1 == null || wire.node2 == null)
+            --groundReferenceCount;
+        if(wire instanceof IOuterHook hook)
+            outerHooks.remove(hook);
+        multiHooks.remove(wire);
+        if(wire instanceof ISolverHook hook) {
+            innerHooks.remove(hook);
+            leafInnerHooks.remove(hook);
+            if(mna != null)
+                mna.hooksChanged();
+        }
+        if(wire instanceof IStaticResidual residual)
+            residuals.remove(residual);
+        if(wire.getNetwork() == this)
+            wire.setNetwork(null);
+    }
+
+    private boolean isMember(Object element) {
+        if(element instanceof AbstractElectricWire wire)
+            return wires.contains(wire);
+        if(element instanceof IElectricNode node && leafNodes.containsKey(node))
+            return true;
+        if(element instanceof INode node)
+            return hasNode(node);
+        // Not something this network tracks, it can't be judged.
+        return true;
+    }
+
+    private boolean isTracked(IElectricNode node) {
+        return node == null || hasNode(node) || leafNodes.containsKey(node);
+    }
+
+    /**
+     * Short description of the network for diagnostic messages.
+     */
+    public String describe() {
+        return String.format("nodes=%d wires=%d leafs=%d sources=%d groundRefs=%d hooks=%d converged=%b dirty=%b multiTick=%d",
+                nodes.size(), wires.size(), leafNodes.size(), sourceCount, groundReferenceCount, innerHooks.size(),
+                isConverged(), dirty, currentMultiTick);
+    }
+
+    /**
+     * Verifies that everything this network stores about its contents is still true and repairs what isn't:
+     * nodes and wires which belong to somebody else, wires connecting nodes outside of the network, hook sets
+     * referencing removed elements, node indices, the source counters and the solver allocation.
+     * @return Number of inconsistencies which were repaired.
+     */
+    public int audit() {
+        int repairs = 0;
+
+        int before = nodes.size();
+        evictForeignNodes();
+        repairs += before - nodes.size();
+
+        for(int i = 0; i < nodes.size(); ++i) {
+            var node = nodes.get(i);
+            if(node.getIndex() != i) {
+                node.assignIndex(i);
+                ++repairs;
+                dirty = true;
+            }
+        }
+
+        for(var wire : List.copyOf(wires)) {
+            if(wire.getNetwork() != this) {
+                // Another network owns this wire now, leave it alone and just forget it.
+                wires.remove(wire);
+                dropWireReferences(wire);
+                ++repairs;
+                dirty = true;
+            } else if(!isTracked(wire.node1) || !isTracked(wire.node2)) {
+                dropWire(wire);
+                ++repairs;
+                dirty = true;
+            }
+        }
+
+        repairs += prune(outerHooks);
+        repairs += prune(multiHooks);
+        repairs += prune(innerHooks);
+        repairs += prune(leafInnerHooks);
+        repairs += prune(residuals);
+        repairs += prune(couplings);
+        for(var iter = leafNodes.keySet().iterator(); iter.hasNext(); ) {
+            var leaf = iter.next();
+            if(leaf.getNetwork() != this) {
+                iter.remove();
+                ++repairs;
+                dirty = true;
+            }
+        }
+
+        int sources = 0, grounds = 0;
+        for(var node : nodes) {
+            if(node.isSource())
+                ++sources;
+        }
+        for(var wire : wires) {
+            if(wire.isSource())
+                ++sources;
+            if(wire.node1 == null || wire.node2 == null)
+                ++grounds;
+        }
+        if(sources != sourceCount || grounds != groundReferenceCount) {
+            RateLimitedLog.warn(LOGGER, "audit-counters", "Corrected stale network counters: sources {} -> {}, ground references {} -> {}",
+                    sourceCount, sources, groundReferenceCount, grounds);
+            sourceCount = sources;
+            groundReferenceCount = grounds;
+            ++repairs;
+            dirty = true;
+        }
+
+        if(!dirty && mna != null && allocatedNodeCount != nodes.size()) {
+            allocatedNodeCount = -1;
+            ++repairs;
+            dirty = true;
+        }
+
+        if(repairs > 0) {
+            if(mna != null)
+                mna.hooksChanged();
+            RateLimitedLog.warn(LOGGER, "audit-repairs", "Repaired {} stale entries in a network ({})", repairs, describe());
+        }
+        return repairs;
+    }
+
+    private void dropWireReferences(AbstractElectricWire wire) {
+        if(wire instanceof IOuterHook hook)
+            outerHooks.remove(hook);
+        multiHooks.remove(wire);
+        if(wire instanceof ISolverHook hook) {
+            innerHooks.remove(hook);
+            leafInnerHooks.remove(hook);
+        }
+        if(wire instanceof IStaticResidual residual)
+            residuals.remove(residual);
+    }
+
+    private int prune(Set<? extends Object> set) {
+        int removed = 0;
+        for(var iter = set.iterator(); iter.hasNext(); ) {
+            if(!isMember(iter.next())) {
+                iter.remove();
+                ++removed;
+            }
+        }
+        if(removed > 0)
+            dirty = true;
+        return removed;
+    }
+
     public int size() {
         return nodes.size();
     }
@@ -490,19 +652,8 @@ public class ElectricalNetwork implements IStamped {
             wire.stamp(mna::jacobianAdd, G);
         }
 
-        staleWires.forEach(wire -> {
-            if(wire instanceof IOuterHook hook)
-                outerHooks.remove(hook);
-            multiHooks.remove(wire);
-            if(wire instanceof ISolverHook hook) {
-                innerHooks.remove(hook);
-                leafInnerHooks.remove(hook);
-                mna.hooksChanged();
-            }
-            if(wire instanceof IStaticResidual residual)
-                residuals.remove(residual);
-            wires.remove(wire);
-        });
+        // The matrix has just been built without them, so there is no need to mark it dirty again.
+        staleWires.forEach(this::dropWire);
         for(var node : couplings) {
             try {
                 // This is using the same method as wires but coupling nodes,
@@ -588,6 +739,13 @@ public class ElectricalNetwork implements IStamped {
         innerHooks.clear();
         residuals.clear();
         leafNodes.clear();
+        // Everything derived from the contents is stale now.
+        sourceCount = 0;
+        groundReferenceCount = 0;
+        conductanceDelta = 0;
+        conductanceUpdates = 0;
+        allocatedNodeCount = -1;
+        dirty = true;
         if(mna != null)
             mna.hooksChanged();
     }
@@ -713,6 +871,7 @@ public class ElectricalNetwork implements IStamped {
         if(dirty) {
             rebuiltFromScratch = true;
             mna.allocate(nodeCount);
+            allocatedNodeCount = nodeCount;
             dirty = false;
 
             currentMultiTick = multiTicks;
@@ -807,6 +966,11 @@ public class ElectricalNetwork implements IStamped {
         }
 
         evictForeignNodes();
+        if(!dirty && allocatedNodeCount != nodes.size()) {
+            // The node list changed without the solver being told, writing to it would fail or corrupt it.
+            RateLimitedLog.warn(LOGGER, "allocation-mismatch", "Solver was allocated for {} nodes but the network has {}, rebuilding", allocatedNodeCount, nodes.size());
+            dirty = true;
+        }
 
         prepareMatrices(multiTicks);
     }

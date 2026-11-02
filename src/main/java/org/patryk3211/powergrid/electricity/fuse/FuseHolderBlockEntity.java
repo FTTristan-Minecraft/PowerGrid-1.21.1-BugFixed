@@ -28,7 +28,10 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
+import org.patryk3211.powergrid.PowerGrid;
 import org.patryk3211.powergrid.collections.ModdedItems;
+import org.patryk3211.powergrid.electricity.GridDiagnostics;
+import org.patryk3211.powergrid.utility.RateLimitedLog;
 import org.patryk3211.powergrid.collections.ModdedSoundEvents;
 import org.patryk3211.powergrid.electricity.base.ElectricBlockEntity;
 import org.patryk3211.powergrid.electricity.particles.SparkParticleData;
@@ -43,6 +46,8 @@ public class FuseHolderBlockEntity extends ElectricBlockEntity {
 
     private FuseState state;
     private int overcurrentTicks;
+    private long lastOvercurrentTime = Long.MIN_VALUE;
+    private double overcurrentPeak;
 
     public FuseHolderBlockEntity(BlockEntityType<?> type, BlockPos pos, BlockState state) {
         super(type, pos, state);
@@ -88,15 +93,35 @@ public class FuseHolderBlockEntity extends ElectricBlockEntity {
 
     @Override
     public void electricalTick() {
-        if(fuseWire.getState()) {
-            if(fuseWire.isConverged() && Math.abs(fuseWire.current()) > setting.value) {
-                if(++overcurrentTicks >= 5)
-                    setState(FuseState.BLOWN);
-            } else {
-                overcurrentTicks = 0;
-            }
-        } else {
+        if(level == null || level.isClientSide)
+            return;
+        if(!fuseWire.getState()) {
             overcurrentTicks = 0;
+            return;
+        }
+        if(!fuseWire.isConverged())
+            return;
+        var current = Math.abs(fuseWire.current());
+        if(current <= setting.value) {
+            overcurrentTicks = 0;
+            return;
+        }
+        var now = level.getGameTime();
+        // Readings which are far apart are not one streak.
+        if(now - lastOvercurrentTime > 20) {
+            overcurrentTicks = 0;
+            overcurrentPeak = 0;
+        }
+        lastOvercurrentTime = now;
+        overcurrentPeak = Math.max(overcurrentPeak, current);
+        if(++overcurrentTicks >= 5) {
+            RateLimitedLog.warn(PowerGrid.LOGGER, "fuse-blown-" + worldPosition.asLong(),
+                    "Fuse at {} ({}) BLOWN: current stayed above {} A for {} ticks, peak {} A: {}",
+                    GridDiagnostics.position(worldPosition), level.dimension().location(), setting.value,
+                    overcurrentTicks, String.format("%.3f", overcurrentPeak), GridDiagnostics.describe(fuseWire));
+            overcurrentTicks = 0;
+            overcurrentPeak = 0;
+            setState(FuseState.BLOWN);
         }
     }
 
