@@ -379,9 +379,20 @@ public abstract class BaseWireEntity extends Entity implements EntityDataS2CPack
         resistanceOverride = null;
     }
 
+    // The solver works with conductance (1 / R) so a cord can't have exactly zero resistance. This is low enough to
+    // neither limit the current nor heat the cord, whatever the length or the load.
+    public static final float CORD_RESISTANCE = 1.0e-5f;
+
+    protected boolean isNearLossless() {
+        return wireEntry.cord();
+    }
+
     public float getResistance() {
-        if(resistanceOverride == null)
-            resistanceOverride = wireEntry.resistancePerItem() * Math.max(itemCount, 1);
+        if(resistanceOverride == null) {
+            resistanceOverride = isNearLossless()
+                    ? CORD_RESISTANCE
+                    : wireEntry.resistancePerItem() * Math.max(itemCount, 1);
+        }
         return resistanceOverride;
     }
 

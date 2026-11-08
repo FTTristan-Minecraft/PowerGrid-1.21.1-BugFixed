@@ -60,6 +60,12 @@ public class StringLightCordEntity extends CordEntity {
 
     private int[] colorPattern;
 
+    @Override
+    protected boolean isNearLossless() {
+        // The light string is a load, its resistance is part of how it behaves.
+        return false;
+    }
+
     public static StringLightCordEntity create(Level world, ICordEndpoint endpoint1, ICordEndpoint endpoint2, ItemStack item, @Nullable Float resistance) {
         if(!IWire.isCord(world, item.getItem()))
             throw new IllegalArgumentException("ItemStack must be of a CordItem");
